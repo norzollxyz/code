@@ -644,34 +644,35 @@ def process_message(msg):
             TelegramInterface.send_message(chat_id, f"{Config.EMOJI['error']} Ошибка загрузки фото")
 
 
+# ... весь предыдущий код (классы, функции, обработчики и т.д.) ...
+
 # ==============================================================================
-# FLASK WEBHOOK — точка входа
+# FLASK WEBHOOK — точка входа для Telegram
 # ==============================================================================
 app = Flask(__name__)
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/', methods=['GET', 'POST'])  # <--- ВОТ ЭТА СТРОКА, ИЩИ ЕЁ
 def webhook():
     if request.method == 'GET':
-        return f"TITAN {Config.VERSION} • ACTIVE • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 200
+        return f"TITAN {Config.VERSION} ACTIVE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 200
 
     try:
-        update = request.get_json()
+        update = request.get_json(silent=True)
         if not update:
+            logging.info("Получен пустой POST от Telegram")
             return "OK", 200
 
-        if "callback_query" in update:
-            process_callback_query(update["callback_query"])
-        elif "message" in update:
+        logging.info(f"Получен update от Telegram: {update.keys()}")
+
+        if "message" in update:
             process_message(update["message"])
+        elif "callback_query" in update:
+            process_callback_query(update["callback_query"])
 
+        return "OK", 200
     except Exception as e:
-        logging.critical(f"Критический краш в webhook: {traceback.format_exc()}")
-        stats = DatabaseManager.read(Config.FILES["stats"]) or {}
-        stats["errors"] = stats.get("errors", 0) + 1
-        DatabaseManager.write(Config.FILES["stats"], stats)
-
-    return "OK", 200
-
+        logging.error(f"Ошибка обработки POST: {traceback.format_exc()}")
+        return "OK", 200  # Telegram требует 200 даже при ошибке
 
 # ==============================================================================
 # ЗАПУСК СЕРВЕРА
