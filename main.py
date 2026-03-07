@@ -12,8 +12,6 @@ LOGS_FILE = "logs.txt"
 BC_HISTORY = "bc_history.json"
 ADMIN_STATE = {}
 
-# --- УСТАНОВКА ЛИЧНОСТИ УДАЛЕНА ---
-
 def send_tg(chat_id, text=None, photo=None, kb=None, reply_kb=None, doc=None):
     url = f"https://api.telegram.org/bot{TOKEN}/"
     p = {"chat_id": chat_id, "parse_mode": "HTML", "disable_web_page_preview": True}
@@ -39,17 +37,16 @@ def real_progress(chat_id, task):
     mid = res.get("result", {}).get("message_id")
     if mid:
         curr = 1
-        for _ in range(5):
-            curr += random.randint(18, 22)
+        for _ in range(4):
+            curr += random.randint(20, 25)
             if curr > 99: curr = 99
-            time.sleep(0.6)
+            time.sleep(0.4)
             edit_tg(chat_id, mid, f"📡 <b>{task}</b>\n└ ⏳ <code>{curr}%</code>")
         return mid
     return None
 
 def get_ai(prompt, img_b64=None, voice_b64=None):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
-    # Отправляем чистый промпт пользователя
     parts = [{"text": prompt}]
     if img_b64: parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
     if voice_b64: parts.append({"inline_data": {"mime_type": "audio/ogg", "data": voice_b64}})
@@ -57,22 +54,22 @@ def get_ai(prompt, img_b64=None, voice_b64=None):
         r = requests.post(url, json={"contents": [{"parts": parts}]}, timeout=15).json()
         return r['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        return f"🛰 Gemini Error: {str(e)}"
+        return f"🛰 Ошибка Gemini: {str(e)}"
 
 @app.route('/', methods=['POST', 'GET'])
 def webhook():
-    if request.method == 'GET': return "SYSTEM_V21_CLEAN", 200
+    if request.method == 'GET': return "SYSTEM_V22_READY", 200
     data = request.get_json()
     if not data: return "OK", 200
 
-    # CALLBACKS
+    # CALLBACKS (Админ-меню)
     if "callback_query" in data:
         cb = data["callback_query"]
         cid, call = cb["message"]["chat"]["id"], cb["data"]
         if cid == ADMIN_ID:
             if call == "adm_bc":
                 ADMIN_STATE[cid] = "waiting_bc"
-                send_tg(cid, "📝 Отправь контент для рассылки всем:")
+                send_tg(cid, "📝 Отправь сообщение для рассылки (текст или фото):")
             elif call == "adm_rev":
                 if os.path.exists(BC_HISTORY):
                     with open(BC_HISTORY, "r") as f: h = json.load(f)
@@ -91,19 +88,49 @@ def webhook():
     chat_id, text = msg["chat"]["id"], msg.get("text", "")
     caption = msg.get("caption", "")
 
-    # Регистрация и логи
+    # РЕГИСТРАЦИЯ
     if not os.path.exists(USERS_FILE): open(USERS_FILE, "a").close()
     with open(USERS_FILE, "r+") as f:
         if str(chat_id) not in f.read(): f.write(f"{chat_id}\n")
     if text or caption:
         with open(LOGS_FILE, "a") as l: l.write(f"[{datetime.datetime.now()}] {chat_id}: {text or caption}\n")
 
+    # --- ЖИРНОЕ СТАРТОВОЕ МЕНЮ ---
     if text == "/start":
-        send_tg(chat_id, "🦾 <b>Gemini System V21.0</b>\n\nСпрашивай, присылай фото или голос. Просто напиши 'Нарисуй стул'!")
+        welcome_text = (
+            "🚀 <b>Добро пожаловать в Gemini Chat TG!</b>\n\n"
+            "Я — твой универсальный ИИ-ассистент нового поколения. Вот что я умею:\n\n"
+            "🧠 <b>Текстовый разум:</b> Отвечаю на любые вопросы, пишу код и тексты.\n"
+            "🖼 <b>Генерация образов:</b> Напиши «Нарисуй [запрос]», и я создам арт.\n"
+            "🎤 <b>Голосовой ввод:</b> Просто отправь голосовое, и я пойму тебя.\n"
+            "👁 <b>Зрение:</b> Отправь фото, и я опишу, что на нем изображено.\n\n"
+            "<i>Используй кнопки снизу для удобного управления!</i>"
+        )
+        # Кнопки снизу (Reply Keyboard)
+        reply_kb = {
+            "keyboard": [
+                [{"text": "🎨 Нарисуй стул"}, {"text": "🖼 Нарисуй картину"}],
+                [{"text": "📊 Моя статистика"}, {"text": "ℹ️ О боте"}]
+            ],
+            "resize_keyboard": True,
+            "one_time_keyboard": False
+        }
+        send_tg(chat_id, welcome_text, reply_kb=reply_kb)
         return "OK", 200
 
-    # АДМИН-МЕНЮ (Голосовые и проценты для админа)
+    # ИНФО-КНОПКИ
+    if text == "ℹ️ О боте":
+        send_tg(chat_id, "💎 <b>Gemini Chat TG</b>\nВерсия: 22.0 Stable\nДвижок: Gemini 1.5 Flash\nСтатус: Online 🟢")
+        return "OK", 200
+
+    # АДМИНКА
     if chat_id == ADMIN_ID:
+        if text == "/admin":
+            kb = [[{"text": "📢 Рассылка", "callback_data": "adm_bc"}, {"text": "🗑 Откат", "callback_data": "adm_rev"}],
+                  [{"text": "📑 Логи", "callback_data": "adm_logs"}, {"text": "📊 Стата", "callback_data": "adm_stat"}]]
+            send_tg(chat_id, "👑 <b>АДМИН-ЦЕНТР</b>", kb=kb)
+            return "OK", 200
+        
         if ADMIN_STATE.get(chat_id) == "waiting_bc":
             with open(USERS_FILE, "r") as f: users = f.read().splitlines()
             h = {}
@@ -113,67 +140,46 @@ def webhook():
                     if res.get("ok"): h[u] = res["result"]["message_id"]
                 except: continue
             with open(BC_HISTORY, "w") as f: json.dump(h, f)
-            send_tg(ADMIN_ID, "✅ Рассылка готова!")
+            send_tg(ADMIN_ID, "✅ Рассылка выполнена!")
             ADMIN_STATE.clear()
             return "OK", 200
 
-        if text == "/admin":
-            kb = [[{"text": "📢 Рассылка", "callback_data": "adm_bc"}, {"text": "🗑 Откат", "callback_data": "adm_rev"}],
-                  [{"text": "📑 Логи", "callback_data": "adm_logs"}, {"text": "📊 Стата", "callback_data": "adm_stat"}]]
-            send_tg(chat_id, "👑 <b>АДМИН-ПАНЕЛЬ</b>", kb=kb)
-            return "OK", 200
-
-    # ОБЫЧНАЯ ЛОГИКА (Для всех, с процентами и ИИ)
+    # ОБРАБОТКА ЗАПРОСОВ
     if text or "photo" in msg or "voice" in msg:
-        # Проверка на рисование
-        trigs = ["нарисуй", "сгенерируй", "создай", "draw", "draw a picture", "картину"]
         full_q = (text + caption).lower()
+        trigs = ["нарисуй", "сгенерируй", "создай", "draw", "картину"]
+        
         if any(w in full_q for w in trigs):
-            # Показываем проценты тому, кто попросил
-            mid = real_progress(chat_id, "Обработка запроса")
-            prompt = full_q
-            for w in trigs: prompt = prompt.replace(w, "")
-            # Очищенный промпт (стул, телевизор и т.д.)
-            prompt = prompt.strip() or "cyberpunk style"
-            img_url = f"https://image.pollinations.ai/prompt/{prompt}?nologo=true&width=1024&height=1024"
+            mid = real_progress(chat_id, "Создание образа")
+            p = full_q
+            for w in trigs: p = p.replace(w, "")
+            p = p.strip() or "abstract art"
+            img_url = f"https://image.pollinations.ai/prompt/{p}?nologo=true&width=1024&height=1024"
             
-            # Удаляем проценты у просившего
             if mid: delete_tg(chat_id, mid)
             
-            # --- ВАЖНО: ОТПРАВЛЯЕМ КАРТИНКУ ТОЛЬКО АДМИНУ ---
-            # Уведомляем админа, кто попросил
+            # Отправляем админу, уведомляем юзера
             if chat_id != ADMIN_ID:
-                send_tg(ADMIN_ID, f"🔔 <b>Юзер {chat_id} попросил нарисовать:</b>\n{prompt}")
+                send_tg(ADMIN_ID, f"🔔 Юзер {chat_id} заказал: {p}")
+            send_tg(ADMIN_ID, f"✨ <b>Готово по запросу:</b> {p}", photo=img_url)
             
-            # Шлем картинку тебе
-            send_tg(ADMIN_ID, f"✨ <b>Готово!</b>\nЗапрос: {prompt}", photo=img_url)
-            
-            # А юзеру шлем просто текст, если это не ты
             if chat_id != ADMIN_ID:
-                send_tg(chat_id, "✅ Картинка сгенерирована и отправлена админу.")
-                
+                send_tg(chat_id, "✅ Твой запрос обработан. Результат отправлен админу.")
             return "OK", 200
 
-        # Если голос
-        if "voice" in msg:
-            mid = real_progress(chat_id, "Обработка аудио")
-            fid = msg["voice"]["file_id"]
-            fp = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={fid}").json()["result"]["file_path"]
-            vb64 = base64.b64encode(requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{fp}").content).decode('utf-8')
-            ans = get_ai("Пользователь отправил голосовое. Ответь ему.", voice_b64=vb64)
-            if mid: delete_tg(chat_id, mid)
-            send_tg(chat_id, ans)
-            return "OK", 200
-
-        # Обычный текст/фото через Gemini
-        mid = real_progress(chat_id, "Анализ данных")
-        img_b64 = None
+        # Текст / Голос / Фото
+        mid = real_progress(chat_id, "Gemini Анализ")
+        img_b64, voice_b64 = None, None
         if "photo" in msg:
             fid = msg["photo"][-1]["file_id"]
             fp = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={fid}").json()["result"]["file_path"]
             img_b64 = base64.b64encode(requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{fp}").content).decode('utf-8')
-        
-        ans = get_ai(text or caption, img_b64=img_b64)
+        if "voice" in msg:
+            fid = msg["voice"]["file_id"]
+            fp = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={fid}").json()["result"]["file_path"]
+            voice_b64 = base64.b64encode(requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{fp}").content).decode('utf-8')
+
+        ans = get_ai(text or caption or "Опиши контент", img_b64=img_b64, voice_b64=voice_b64)
         if mid: delete_tg(chat_id, mid)
         send_tg(chat_id, ans)
 
@@ -181,4 +187,4 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
-            
+    
