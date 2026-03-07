@@ -6,21 +6,21 @@ from flask import Flask, request
 # ⚙️ МОДУЛЬ 1: КОНФИГУРАЦИЯ (V26.0 PROFILE, ACTIONS & COMMANDS)
 # ==============================================================================
 class Config:
-    VERSION = "V26.0 OMEGA FINAL"
+    VERSION = "V26.0 OMEGA FIX-2"
     BOT_TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
     GEMINI_API_KEY = "AIzaSyAX89VW3n58WbISzEocxLVz1CnS7gq-eyk"
     MAIN_ADMIN_ID = 5378010557
     
-    ROOT_DIR = "TITAN_DATA_V26"
+    ROOT_DIR = "TITAN_VAULT_V26"
     FILES = {
         "users": f"{ROOT_DIR}/users.json",
         "admins": f"{ROOT_DIR}/admins.json",
         "stats": f"{ROOT_DIR}/stats.json",
-        "log": f"{ROOT_DIR}/titan.log"
+        "log": f"{ROOT_DIR}/titan_sys.log"
     }
 
 # ==============================================================================
-# 📝 МОДУЛЬ 2: СУПЕР-БАЗА ДАННЫХ (БЕЗ ОШИБОК 500)
+# 📝 МОДУЛЬ 2: БАЗА ДАННЫХ (БЕТОННАЯ СТАБИЛЬНОСТЬ)
 # ==============================================================================
 class DB:
     _lock = Lock()
@@ -54,26 +54,26 @@ class DB:
                 json.dump(data, f, indent=4, ensure_ascii=False)
 
 # ==============================================================================
-# 🧠 МОДУЛЬ 3: ЯДРО ИИ (ИСПРАВЛЕННАЯ МОДЕЛЬ GEMINI)
+# 🧠 МОДУЛЬ 3: ЯДРО ИИ (ИСПРАВЛЕННЫЙ ЭНДПОИНТ V1)
 # ==============================================================================
 class AI_Engine:
     @staticmethod
     def ask_gemini(prompt):
-        # Используем gemini-1.5-flash-latest для максимальной совместимости
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={Config.GEMINI_API_KEY}"
+        # Используем стабильную версию v1 вместо v1beta
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={Config.GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         try:
-            r = requests.post(url, json=payload, headers=headers, timeout=25).json()
-            if 'candidates' in r:
-                return r['candidates'][0]['content']['parts'][0]['text']
-            # Если модель не найдена, пробуем резервный вариант
-            return f"❌ Ошибка ИИ: {r.get('error', {}).get('message', 'Неизвестно')}"
+            r = requests.post(url, json=payload, headers=headers, timeout=25)
+            data = r.json()
+            if 'candidates' in data:
+                return data['candidates'][0]['content']['parts'][0]['text']
+            return f"❌ Ошибка API: {data.get('error', {}).get('message', 'Неизвестная ошибка')}"
         except Exception as e:
-            return f"❌ Критическая ошибка связи: {str(e)}"
+            return f"❌ Ошибка связи с сервером ИИ: {str(e)}"
 
 # ==============================================================================
-# 📡 МОДУЛЬ 4: ТЕЛЕГРАМ API (ОМЕГА-ОТПРАВКА)
+# 📡 МОДУЛЬ 4: ТЕЛЕГРАМ API (ОПТИМИЗИРОВАННЫЙ)
 # ==============================================================================
 class TG:
     @staticmethod
@@ -111,11 +111,11 @@ def set_state(uid, state):
 
 @app.route('/', methods=['POST', 'GET'])
 def gateway():
-    if request.method == 'GET': return "TITAN V26.0 OMEGA ONLINE", 200
+    if request.method == 'GET': return "TITAN V26.0 OMEGA ACTIVE", 200
     upd = request.get_json()
     if not upd: return "OK", 200
 
-    # CALLBACK (Инлайн кнопки)
+    # CALLBACK (Админка)
     if "callback_query" in upd:
         cb = upd["callback_query"]; uid, cid, data = cb["from"]["id"], cb["message"]["chat"]["id"], cb["data"]
         admins = DB.load(Config.FILES["admins"])
@@ -123,15 +123,10 @@ def gateway():
 
         if data == "a_st":
             s, users = DB.load(Config.FILES["stats"]), DB.load(Config.FILES["users"])
-            TG.send(cid, f"📊 <b>СТАТИСТИКА</b>\nЮзеры: {len(users)}\nИИ: {s.get('ai_calls',0)}\nАрты: {s.get('arts',0)}")
+            TG.send(cid, f"📊 <b>СТАТИСТИКА</b>\nВсего юзеров: {len(users)}\nЗапросов ИИ: {s.get('ai_calls',0)}\nАртов: {s.get('arts',0)}")
         elif data == "a_bc":
             set_state(uid, "WAIT_BC")
-            TG.send(cid, "📢 <b>РЕЖИМ РАССЫЛКИ</b>\nОтправь текст или фото (можно переслать):", rkb={"keyboard": [[{"text": "❌ ОТМЕНИТЬ"}]], "resize_keyboard": True})
-        elif data == "a_log":
-            if os.path.exists(Config.FILES["log"]):
-                with open(Config.FILES["log"], 'rb') as f:
-                    requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendDocument", data={"chat_id": cid}, files={"document": ('titan.log', f)})
-            else: TG.send(cid, "❌ Лог пуст.")
+            TG.send(cid, "📢 <b>РАССЫЛКА</b>\nОтправьте текст или фото (можно переслать):", rkb={"keyboard": [[{"text": "❌ ОТМЕНИТЬ"}]], "resize_keyboard": True})
         return "OK", 200
 
     if "message" not in upd: return "OK", 200
@@ -147,7 +142,7 @@ def gateway():
     state = u[str(uid)].get("state", "IDLE")
     is_admin = uid in DB.load(Config.FILES["admins"])
 
-    # Меню
+    # КЛАВИАТУРЫ
     kb_main = {"keyboard": [[{"text": "🤖 Начать общаться"}, {"text": "🎨 Создать арт"}], 
                             [{"text": "👤 Мой профиль"}, {"text": "🆘 Помощь FAQ"}]], "resize_keyboard": True}
     if is_admin: kb_main["keyboard"].append([{"text": "/admin"}])
@@ -155,7 +150,7 @@ def gateway():
 
     if txt == "/start" or txt == "❌ ОТМЕНИТЬ":
         set_state(uid, "IDLE")
-        TG.send(cid, f"🌌 <b>TITAN V26.0 OMEGA</b>\nСистема готова к работе!", rkb=kb_main)
+        TG.send(cid, f"🌌 <b>TITAN V26.0 OMEGA</b>\nСистема готова, {u[str(uid)]['name']}!", rkb=kb_main)
         return "OK", 200
 
     # ⚙️ ЛОГИКА СОСТОЯНИЙ
@@ -163,10 +158,10 @@ def gateway():
         res = TG.send(cid, "⏳ [▓░░░░░░░░░] 10% (Анализ...)")
         mid = res.get("result", {}).get("message_id")
         
-        full_ans = AI_Engine.ask_gemini(txt)
+        answer = AI_Engine.ask_gemini(txt)
         TG.edit(cid, mid, "⏳ [▓▓▓▓▓▓░░░░] 60% (Печатаю...)")
         
-        words = full_ans.split()
+        words = answer.split()
         curr = "✨ <b>Ответ ИИ:</b>\n\n"
         for i in range(0, len(words), 5):
             curr += " ".join(words[i:i+5]) + " "
@@ -179,7 +174,7 @@ def gateway():
         DB.save(Config.FILES["stats"], s)
 
     elif state == "ART_MODE" and txt:
-        TG.send(cid, "👨‍🎨 <i>Рисую ваш запрос...</i>")
+        TG.send(cid, "👨‍🎨 <i>Рисую...</i>")
         img = f"https://image.pollinations.ai/prompt/{txt}?nologo=true&seed={uid}"
         TG.send(cid, f"✅ Готово: {txt}", photo=img)
         s = DB.load(Config.FILES["stats"]); s["arts"] = s.get("arts", 0) + 1; DB.save(Config.FILES["stats"], s)
@@ -195,7 +190,7 @@ def gateway():
         set_state(uid, "IDLE")
         TG.send(cid, f"✅ Рассылка завершена! Получили: {success}", rkb=kb_main)
 
-    # 🔘 КНОПКИ МЕНЮ
+    # 🔘 КНОПКИ
     elif txt == "🤖 Начать общаться":
         set_state(uid, "AI_MODE")
         TG.send(cid, "🧠 <b>Режим ИИ включен.</b> Пиши вопрос:", rkb=kb_cancel)
@@ -205,14 +200,12 @@ def gateway():
     elif txt == "👤 Мой профиль":
         TG.send(cid, f"👤 <b>ПРОФИЛЬ</b>\n🆔 ID: <code>{uid}</code>\n🛡 Статус: {'Админ' if is_admin else 'Юзер'}")
     elif txt == "/admin" and is_admin:
-        kb_adm = [[{"text": "📢 Рассылка", "callback_data": "a_bc"}, {"text": "📊 Стата", "callback_data": "a_st"}],
-                  [{"text": "📑 Логи", "callback_data": "a_log"}]]
+        kb_adm = [[{"text": "📢 Рассылка", "callback_data": "a_bc"}, {"text": "📊 Стата", "callback_data": "a_st"}]]
         TG.send(cid, "👑 <b>ADMIN PANEL</b>", kb=kb_adm)
 
     return "OK", 200
 
 if __name__ == "__main__":
     DB.init()
-    logging.basicConfig(filename=Config.FILES["log"], level=logging.INFO, format='%(asctime)s %(message)s')
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
             
