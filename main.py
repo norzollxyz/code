@@ -1,204 +1,137 @@
-import os, sys, json, time, logging, requests
-from threading import Lock
+import os, sys, json, time, logging, requests, threading
 from flask import Flask, request
 
 # ==============================================================================
-# ⚙️ МОДУЛЬ 1: КОНФИГУРАЦИЯ (V26.0 PROFILE, ACTIONS & COMMANDS)
+# ⚙️ КОНФИГУРАЦИЯ
 # ==============================================================================
 class Config:
-    VERSION = "V26.0 OMEGA GOD-MODE"
+    VERSION = "V26.0 NEBULA"
     BOT_TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
     GEMINI_API_KEY = "AIzaSyAX89VW3n58WbISzEocxLVz1CnS7gq-eyk"
     MAIN_ADMIN_ID = 5378010557
-    
-    ROOT_DIR = "TITAN_V26_FINAL_VAULT"
+    ROOT_DIR = "TITAN_STORAGE"
     FILES = {
         "users": f"{ROOT_DIR}/users.json",
         "admins": f"{ROOT_DIR}/admins.json",
-        "stats": f"{ROOT_DIR}/stats.json",
-        "log": f"{ROOT_DIR}/system.log"
+        "stats": f"{ROOT_DIR}/stats.json"
     }
 
 # ==============================================================================
-# 📝 МОДУЛЬ 2: БАЗА ДАННЫХ (АВТО-СОЗДАНИЕ)
+# 📝 БАЗА ДАННЫХ (ВЫНЕСЕНА В ТОП ДЛЯ GUNICORN)
 # ==============================================================================
-class DB:
-    _lock = Lock()
-    
-    @staticmethod
-    def init():
-        if not os.path.exists(Config.ROOT_DIR): os.makedirs(Config.ROOT_DIR)
-        defaults = {
-            Config.FILES["users"]: {}, 
-            Config.FILES["admins"]: [Config.MAIN_ADMIN_ID], 
-            Config.FILES["stats"]: {"ai_calls": 0, "arts": 0}
-        }
-        for path, data in defaults.items():
-            if not os.path.exists(path): 
-                with open(path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4)
+db_lock = threading.Lock()
 
-    @staticmethod
-    def load(path):
-        with DB._lock:
-            if not os.path.exists(path): DB.init()
-            try:
-                with open(path, 'r', encoding='utf-8') as f: return json.load(f)
-            except: return {}
+def init_db():
+    if not os.path.exists(Config.ROOT_DIR): os.makedirs(Config.ROOT_DIR)
+    defaults = {
+        Config.FILES["users"]: {},
+        Config.FILES["admins"]: [Config.MAIN_ADMIN_ID],
+        Config.FILES["stats"]: {"ai_calls": 0, "arts": 0}
+    }
+    for path, data in defaults.items():
+        if not os.path.exists(path):
+            with open(path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4)
 
-    @staticmethod
-    def save(path, data):
-        with DB._lock:
-            folder = os.path.dirname(path)
-            if not os.path.exists(folder): os.makedirs(folder)
-            with open(path, 'w', encoding='utf-8') as f: 
-                json.dump(data, f, indent=4, ensure_ascii=False)
+init_db() # Запуск сразу!
+
+def load_db(path):
+    with db_lock:
+        try:
+            with open(path, 'r', encoding='utf-8') as f: return json.load(f)
+        except: return {}
+
+def save_db(path, data):
+    with db_lock:
+        with open(path, 'w', encoding='utf-8') as f: json.dump(data, f, indent=4, ensure_ascii=False)
 
 # ==============================================================================
-# 🧠 МОДУЛЬ 3: ЯДРО ИИ (ИСПРАВЛЕННЫЙ ЭНДПОИНТ V1BETA)
+# 🧠 ЯДРО ИИ (ИСПРАВЛЕННЫЙ GEMINI)
 # ==============================================================================
-class AI_Engine:
+class AI:
     @staticmethod
-    def ask_gemini(prompt):
-        # Возвращаемся на v1beta, но с максимально чистым именем модели
+    def talk(prompt):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={Config.GEMINI_API_KEY}"
-        headers = {'Content-Type': 'application/json'}
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         try:
-            r = requests.post(url, json=payload, headers=headers, timeout=30)
-            res_data = r.json()
-            if 'candidates' in res_data:
-                return res_data['candidates'][0]['content']['parts'][0]['text']
-            
-            # Если всё еще ошибка, выводим подробности для диагностики
-            err_msg = res_data.get('error', {}).get('message', 'Unknown Error')
-            return f"❌ Ошибка ИИ: {err_msg}\n(Попробуйте позже или проверьте API ключ)"
+            r = requests.post(url, json=payload, timeout=25)
+            res = r.json()
+            if 'candidates' in res:
+                return res['candidates'][0]['content']['parts'][0]['text']
+            return f"❌ Ошибка API: {res.get('error', {}).get('message', 'Неизвестно')}"
         except Exception as e:
-            return f"❌ Ошибка связи: {str(e)}"
+            return f"❌ Тайм-аут связи с ядром ИИ. Попробуй еще раз."
 
 # ==============================================================================
-# 📡 МОДУЛЬ 4: ТЕЛЕГРАМ API
+# 📡 TELEGRAM API
 # ==============================================================================
-class TG:
-    @staticmethod
-    def call(m, p=None):
-        url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/{m}"
-        try: return requests.post(url, json=p, timeout=25).json()
-        except: return {"ok": False}
-
-    @staticmethod
-    def send(cid, txt, kb=None, rkb=None, photo=None):
-        p = {"chat_id": cid, "parse_mode": "HTML"}
-        if kb: p["reply_markup"] = {"inline_keyboard": kb}
-        if rkb: p["reply_markup"] = rkb
-        if photo:
-            p["photo"], p["caption"] = photo, txt
-            return TG.call("sendPhoto", p)
-        p["text"], p["disable_web_page_preview"] = txt, True
-        return TG.call("sendMessage", p)
-
-    @staticmethod
-    def edit(cid, mid, txt):
-        return TG.call("editMessageText", {"chat_id": cid, "message_id": mid, "text": txt, "parse_mode": "HTML"})
+def tg_send(cid, text, kb=None, photo=None):
+    url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/"
+    p = {"chat_id": cid, "parse_mode": "HTML"}
+    if kb: p["reply_markup"] = kb
+    if photo:
+        p["photo"], p["caption"] = photo, text
+        return requests.post(url + "sendPhoto", json=p).json()
+    p["text"] = text
+    return requests.post(url + "sendMessage", json=p).json()
 
 # ==============================================================================
-# 🚀 МОДУЛЬ 5: ГЛАВНЫЙ КОНТРОЛЛЕР
+# 🚀 КОНТРОЛЛЕР
 # ==============================================================================
 app = Flask(__name__)
 
-def set_state(uid, state):
-    u = DB.load(Config.FILES["users"])
-    if str(uid) not in u: u[str(uid)] = {"name": "User"}
-    u[str(uid)]["state"] = state
-    DB.save(Config.FILES["users"], u)
+@app.route('/health') # Хелсчек для Render
+def health(): return "OK", 200
 
 @app.route('/', methods=['POST', 'GET'])
-def gateway():
-    if request.method == 'GET': return "TITAN V26.0 GOD-MODE ONLINE", 200
+def main_handler():
+    if request.method == 'GET': return "TITAN NEBULA ONLINE", 200
     upd = request.get_json()
-    if not upd: return "OK", 200
-
-    if "callback_query" in upd:
-        cb = upd["callback_query"]; uid, cid, data = cb["from"]["id"], cb["message"]["chat"]["id"], cb["data"]
-        if uid != Config.MAIN_ADMIN_ID: return "OK", 200
-        if data == "a_st":
-            s, u = DB.load(Config.FILES["stats"]), DB.load(Config.FILES["users"])
-            TG.send(cid, f"📊 <b>СТАТИСТИКА</b>\nЮзеров: {len(u)}\nИИ: {s.get('ai_calls',0)}\nАртов: {s.get('arts',0)}")
-        elif data == "a_bc":
-            set_state(uid, "WAIT_BC")
-            TG.send(cid, "📢 <b>РАССЫЛКА</b>\nПришлите текст или фото:", rkb={"keyboard": [[{"text": "❌ ОТМЕНИТЬ"}]], "resize_keyboard": True})
-        return "OK", 200
-
-    if "message" not in upd: return "OK", 200
+    if not upd or "message" not in upd: return "OK", 200
+    
     m = upd["message"]; cid, uid = m["chat"]["id"], m["from"]["id"]
     txt = m.get("text") or m.get("caption") or ""
 
-    u = DB.load(Config.FILES["users"])
-    if str(uid) not in u:
-        u[str(uid)] = {"name": m["from"].get("first_name", "User"), "state": "IDLE"}
-        DB.save(Config.FILES["users"], u)
+    # Состояние юзера
+    users = load_db(Config.FILES["users"])
+    if str(uid) not in users:
+        users[str(uid)] = {"name": m["from"].get("first_name", "User"), "state": "IDLE"}
     
-    state = u[str(uid)].get("state", "IDLE")
-    is_admin = uid == Config.MAIN_ADMIN_ID
+    state = users[str(uid)].get("state", "IDLE")
+    is_adm = uid == Config.MAIN_ADMIN_ID
 
-    kb_main = {"keyboard": [[{"text": "🤖 Начать общаться"}, {"text": "🎨 Создать арт"}], 
-                            [{"text": "👤 Мой профиль"}, {"text": "🆘 Помощь FAQ"}]], "resize_keyboard": True}
-    if is_admin: kb_main["keyboard"].append([{"text": "/admin"}])
-    kb_cancel = {"keyboard": [[{"text": "❌ ОТМЕНИТЬ"}]], "resize_keyboard": True}
-
+    # Обработка команд
+    kb_main = {"keyboard": [[{"text": "🤖 Начать общаться"}, {"text": "🎨 Создать арт"}]], "resize_keyboard": True}
+    
     if txt == "/start" or txt == "❌ ОТМЕНИТЬ":
-        set_state(uid, "IDLE")
-        TG.send(cid, f"🌌 <b>TITAN V26.0 OMEGA</b>\nСистема стабилизирована!", rkb=kb_main)
+        users[str(uid)]["state"] = "IDLE"
+        save_db(Config.FILES["users"], users)
+        tg_send(cid, f"🌌 <b>TITAN {Config.VERSION}</b>\nСистема стабилизирована, {users[str(uid)]['name']}!", kb=kb_main)
         return "OK", 200
 
-    # ЛОГИКА СОСТОЯНИЙ
     if state == "AI_MODE" and txt:
-        res = TG.send(cid, "⏳ [▓░░░░░░░░░] 10% (Анализ...)")
-        mid = res.get("result", {}).get("message_id")
-        
-        answer = AI_Engine.ask_gemini(txt)
-        TG.edit(cid, mid, "⏳ [▓▓▓▓▓▓░░░░] 60% (Печатаю...)")
-        
-        words = answer.split()
-        curr = "✨ <b>Ответ ИИ:</b>\n\n"
-        for i in range(0, len(words), 5):
-            curr += " ".join(words[i:i+5]) + " "
-            TG.edit(cid, mid, curr + "▌")
-            time.sleep(0.3)
-        TG.edit(cid, mid, curr)
-        
-        s = DB.load(Config.FILES["stats"]); s["ai_calls"] = s.get("ai_calls", 0) + 1; DB.save(Config.FILES["stats"], s)
+        ans = AI.talk(txt)
+        tg_send(cid, f"✨ <b>Ответ:</b>\n\n{ans}")
+        s = load_db(Config.FILES["stats"]); s["ai_calls"] += 1; save_db(Config.FILES["stats"], s)
 
     elif state == "ART_MODE" and txt:
-        TG.send(cid, "👨‍🎨 <i>Генерация арта...</i>")
-        img = f"https://image.pollinations.ai/prompt/{txt}?nologo=true&seed={uid}"
-        TG.send(cid, f"🎨 <b>Ваш арт:</b> {txt}", photo=img)
-        s = DB.load(Config.FILES["stats"]); s["arts"] = s.get("arts", 0) + 1; DB.save(Config.FILES["stats"], s)
+        tg_send(cid, "👨‍🎨 <i>Генерация нейро-холста...</i>")
+        img = f"https://image.pollinations.ai/prompt/{txt}?nologo=true"
+        tg_send(cid, f"✅ Готово: {txt}", photo=img)
+        s = load_db(Config.FILES["stats"]); s["arts"] += 1; save_db(Config.FILES["stats"], s)
 
-    elif state == "WAIT_BC" and is_admin:
-        photo = m.get("photo")[-1]["file_id"] if "photo" in m else None
-        success = 0
-        for user_id in u:
-            try:
-                if TG.send(int(user_id), txt, photo=photo).get("ok"): success += 1
-                time.sleep(0.05)
-            except: pass
-        set_state(uid, "IDLE")
-        TG.send(cid, f"✅ Рассылка завершена! Получили: {success}", rkb=kb_main)
-
-    # КНОПКИ
     elif txt == "🤖 Начать общаться":
-        set_state(uid, "AI_MODE")
-        TG.send(cid, "🧠 <b>Режим ИИ включен.</b> Задавайте вопрос:", rkb=kb_cancel)
+        users[str(uid)]["state"] = "AI_MODE"
+        save_db(Config.FILES["users"], users)
+        tg_send(cid, "🧠 <b>Режим ИИ активен.</b> Задавай вопрос:", kb={"keyboard":[[{"text":"❌ ОТМЕНИТЬ"}]], "resize_keyboard":True})
+    
     elif txt == "🎨 Создать арт":
-        set_state(uid, "ART_MODE")
-        TG.send(cid, "🎨 <b>Режим Художника.</b> Что нарисовать?", rkb=kb_cancel)
-    elif txt == "/admin" and is_admin:
-        kb_adm = [[{"text": "📢 Рассылка", "callback_data": "a_bc"}, {"text": "📊 Стата", "callback_data": "a_st"}]]
-        TG.send(cid, "👑 <b>ADMIN PANEL</b>", kb=kb_adm)
+        users[str(uid)]["state"] = "ART_MODE"
+        save_db(Config.FILES["users"], users)
+        tg_send(cid, "🎨 <b>Режим Художника.</b> Опиши картину:", kb={"keyboard":[[{"text":"❌ ОТМЕНИТЬ"}]], "resize_keyboard":True})
 
     return "OK", 200
 
 if __name__ == "__main__":
-    DB.init()
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
-    
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+            
