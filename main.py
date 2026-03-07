@@ -1,77 +1,138 @@
+
 import os
 import requests
 import base64
+import time
 from flask import Flask, request
 
 app = Flask(__name__)
 
-# ================= НАСТРОЙКИ (НЕ ТРОГАЙ) =================
+# ================= НАСТРОЙКИ =================
 TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
 GEMINI_KEY = "AIzaSyAX89VW3n58WbISzEocxLVz1CnS7gq-eyk"
-# =========================================================
+ADMIN_ID = 5626603417 # ЗАМЕНИ НА СВОЙ ID (узнай у @userinfobot)
+USERS_FILE = "users.txt" # Тут будем копить ID для рассылки
+# ==============================================
 
-def ask_ai_unlimited(prompt, img_b64=None):
-    """Умная функция: пробует Gemini, если не выходит — идет через резерв"""
-    # 1. Пробуем Gemini (Основной интеллект)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
-    sys_msg = "Ты ОЛИМП. Помогай с учебой, решай задачи по фото, пиши код. Отвечай кратко и четко."
+def save_user(user_id):
+    if not os.path.exists(USERS_FILE): open(USERS_FILE, "w").close()
+    with open(USERS_FILE, "r+") as f:
+        users = f.read().splitlines()
+        if str(user_id) not in users:
+            f.write(f"{user_id}\n")
+
+def send_tg(chat_id, text, photo=None, kb=None, action=None):
+    url = f"https://api.telegram.org/bot{TOKEN}/"
     
-    payload = {"contents": [{"parts": [{"text": f"{sys_msg}\n\nЗапрос: {prompt}"}]}]}
-    if img_b64:
-        payload["contents"][0]["parts"].append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
+    # Имитация печатания
+    if action:
+        requests.post(url + "sendChatAction", json={"chat_id": chat_id, "action": action})
+        time.sleep(1) # Небольшая пауза для реализма
+
+    payload = {"chat_id": chat_id, "parse_mode": "HTML"}
+    
+    if kb: payload["reply_markup"] = kb
+    
+    if photo:
+        payload.update({"photo": photo, "caption": text})
+        return requests.post(url + "sendPhoto", json=payload)
+    else:
+        payload.update({"text": text})
+        return requests.post(url + "sendMessage", json=payload)
+
+def get_ai(prompt, img=None):
+    # Основной Gemini с обходом очереди
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
+    p_load = {"contents": [{"parts": [{"text": f"Ты ОЛИМП. Отвечай кратко. Запрос: {prompt}"}]}]}
+    if img: p_load["contents"][0]["parts"].append({"inline_data": {"mime_type": "image/jpeg", "data": img}})
     
     try:
-        res = requests.post(url, json=payload, timeout=15).json()
-        return res['candidates'][0]['content']['parts'][0]['text']
+        r = requests.post(url, json=p_load, timeout=10).json()
+        return r['candidates'][0]['content']['parts'][0]['text']
     except:
-        # 2. РЕЗЕРВНЫЙ КАНАЛ (Если Google заблочен)
-        try:
-            backup_url = f"https://text.pollinations.ai/{prompt} (отвечай на русском)"
-            return requests.get(backup_url, timeout=15).text
-        except:
-            return "🛰 ОЛИМП: Все системы перегружены. Попробуй через 2 минуты."
+        # Резерв без очередей
+        return requests.get(f"https://text.pollinations.ai/{prompt}?model=openai&system=Ты-ОЛИМП").text
 
-def send_tg(chat_id, text, photo=None):
-    url = f"https://api.telegram.org/bot{TOKEN}/"
-    if photo:
-        requests.post(url + "sendPhoto", json={"chat_id": chat_id, "photo": photo, "caption": text, "parse_mode": "HTML"})
-    else:
-        requests.post(url + "sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+# ГЛАВНОЕ МЕНЮ (КНОПКИ)
+def main_kb():
+    return {
+        "inline_keyboard": [
+            [{"text": "📸 ИИ Фотошоп", "callback_data": "ai_photo"}, {"text": "🎨 Создать арт", "callback_data": "gen_img"}],
+            [{"text": "📐 Изменить размер", "callback_data": "resize"}, {"text": "💳 Баланс", "callback_data": "bal"}],
+            [{"text": "❓ Помощь", "callback_data": "help"}]
+        ]
+    }
 
 @app.route('/', methods=['POST', 'GET'])
 def webhook():
-    if request.method == 'GET': return "ОЛИМП В СЕТИ", 200
+    if request.method == 'GET': return "ONLINE", 200
     data = request.get_json()
-    if not data or "message" not in data: return "OK", 200
-    
-    msg = data["message"]
-    chat_id = msg["chat"]["id"]
-    
-    # ФОТО (Задачи, контрольные)
-    if "photo" in msg:
-        send_tg(chat_id, "📥 <b>Сканирую...</b>")
-        try:
-            file_id = msg["photo"][-1]["file_id"]
-            f_info = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}").json()
-            img_url = f"https://api.telegram.org/file/bot{TOKEN}/{f_info['result']['file_path']}"
-            img_b64 = base64.b64encode(requests.get(img_url).content).decode('utf-8')
-            send_tg(chat_id, f"🧠 <b>ОЛИМП выдал решение:</b>\n\n{ask_ai_unlimited(msg.get('caption', 'Реши это'), img_b64)}")
-        except:
-            send_tg(chat_id, "⚠️ Ошибка фото. Пришли еще раз.")
+    if not data: return "OK", 200
+
+    # Обработка кнопок
+    if "callback_query" in data:
+        cb = data["callback_query"]
+        chat_id = cb["message"]["chat"]["id"]
+        call_data = cb["data"]
+        
+        if call_data == "ai_photo":
+            send_tg(chat_id, "✨ Пришли фото и напиши в описании, что изменить!")
+        elif call_data == "gen_img":
+            send_tg(chat_id, "📝 Напиши 'Нарисуй [твой запрос]'")
+        elif call_data == "bal":
+            send_tg(chat_id, "💰 Ваш баланс: <b>Безлимитный (VIP)</b>")
         return "OK", 200
 
-    # ТЕКСТ / КОМАНДЫ
-    text = msg.get("text", "").strip()
-    if not text: return "OK", 200
+    if "message" not in data: return "OK", 200
+    msg = data["message"]
+    chat_id = msg["chat"]["id"]
+    save_user(chat_id)
 
-    if text.lower() == "/start":
-        send_tg(chat_id, "🦾 <b>ОЛИМП: УЛЬТРА-РЕЖИМ АКТИВИРОВАН</b>\nПрисылай фото заданий или просто пиши вопрос.")
-    elif any(word in text.lower() for word in ["нарисуй", "картинка"]):
-        p = text.lower().replace("нарисуй", "").strip()
-        send_tg(chat_id, f"🎨 Рисую: {p}", photo=f"https://image.pollinations.ai/prompt/{p}?nologo=true")
-    else:
-        send_tg(chat_id, ask_ai_unlimited(text))
+    text = msg.get("text", "")
+
+    # АДМИН ПАНЕЛЬ
+    if text == "/admin" and chat_id == ADMIN_ID:
+        with open(USERS_FILE, "r") as f: count = len(f.read().splitlines())
+        send_tg(chat_id, f"👑 <b>АДМИН-ПАНЕЛЬ</b>\n\nЮзеров в базе: {count}\n\nЧтобы сделать рассылку, напиши:\n<code>рассылка Текст сообщения</code>")
+        return "OK", 200
+
+    if text.startswith("рассылка ") and chat_id == ADMIN_ID:
+        mail_text = text.replace("рассылка ", "")
+        with open(USERS_FILE, "r") as f:
+            for u_id in f.read().splitlines():
+                send_tg(u_id, f"📢 <b>Объявление:</b>\n\n{mail_text}")
+        send_tg(chat_id, "✅ Рассылка завершена!")
+        return "OK", 200
+
+    # СТАРТ
+    if text == "/start":
+        welcome_img = "https://i.ibb.co/LzNfXwz/image.jpg" # Можешь сменить на свою картинку
+        send_tg(chat_id, "Привет! Я твой <b>ОЛИМП ИИ</b>. Вот что я умею:", photo=welcome_img, kb=main_kb(), action="typing")
+        return "OK", 200
+
+    # ОБРАБОТКА ФОТО
+    if "photo" in msg:
+        send_tg(chat_id, "🤖 Анализирую...", action="upload_photo")
+        file_id = msg["photo"][-1]["file_id"]
+        f_path = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}").json()["result"]["file_path"]
+        img_b64 = base64.b64encode(requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{f_path}").content).decode('utf-8')
+        ans = get_ai(msg.get("caption", "Что на фото?"), img_b64)
+        send_tg(chat_id, f"🧠 <b>Готово:</b>\n{ans}")
+        return "OK", 200
+
+    # ОБЫЧНЫЙ ЧАТ
+    if text:
+        if text.lower().startswith("нарисуй"):
+            prompt = text.lower().replace("нарисуй", "").strip()
+            send_tg(chat_id, "🎨 Рисую твой шедевр...", action="upload_photo")
+            send_tg(chat_id, "✨ Готово!", photo=f"https://image.pollinations.ai/prompt/{prompt}?nologo=true")
+        else:
+            send_tg(chat_id, "🔍 Думаю...", action="typing")
+            ans = get_ai(text)
+            send_tg(chat_id, ans)
+
     return "OK", 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+    
