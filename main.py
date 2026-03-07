@@ -1,233 +1,224 @@
-import os
-import requests
-import base64
-import time
-import random
-import json
-import datetime
-import traceback
-from flask import Flask, request
+"""
+==============================================================================
+ПРОЕКТ: TITAN AI - V26.0 (PROFILE, ACTIONS & COMMANDS)
+АРХИТЕКТУРА: PRO-LEVEL (Многопоточность, ООП, Защита от сбоев)
+ЧАСТЬ 1: ЯДРО СИСТЕМЫ, ЛОГИРОВАНИЕ И РАБОТА С ФАЙЛАМИ
+==============================================================================
+"""
 
-# ==========================================
-# ⚙️ ГЛОБАЛЬНАЯ КОНФИГУРАЦИЯ СИСТЕМЫ
-# ==========================================
+import os
+import sys
+import json
+import time
+import base64
+import random
+import logging
+import threading
+import traceback
+from datetime import datetime
+from threading import Lock
+import requests
+from flask import Flask, request, jsonify
+
+# ==============================================================================
+# ⚙️ MODULE 1: СИСТЕМНАЯ КОНФИГУРАЦИЯ (CONFIG MANAGER)
+# ==============================================================================
+
+class Config:
+    """Глобальный класс настроек проекта V26.0"""
+    VERSION = "V26.0 (PROFILE, ACTIONS & COMMANDS)"
+    
+    # Ключи доступа (ВНИМАНИЕ: в рабочих проектах их прячут в .env)
+    BOT_TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
+    GEMINI_API_KEY = "AIzaSyAX89VW3n58WbISzEocxLVz1CnS7gq-eyk"
+    
+    # Права доступа
+    MAIN_ADMIN_ID = 5378010557 # ТВОЙ ID
+    
+    # Настройки сети и таймаутов
+    REQUEST_TIMEOUT = 30
+    MAX_RETRIES = 3
+    
+    # Файловая система
+    ROOT_DIR = "V26_DATA_VAULT"
+    DIRS = {
+        "db": f"{ROOT_DIR}/database",
+        "logs": f"{ROOT_DIR}/logs",
+        "temp": f"{ROOT_DIR}/temp_media",
+        "backups": f"{ROOT_DIR}/backups"
+    }
+    
+    # Файлы данных
+    FILES = {
+        "users": f"{DIRS['db']}/users_db.json",
+        "admins": f"{DIRS['db']}/admins_db.json",
+        "bans": f"{DIRS['db']}/ban_list.json",
+        "stats": f"{DIRS['db']}/system_stats.json",
+        "settings": f"{DIRS['db']}/bot_settings.json",
+        "log": f"{DIRS['logs']}/titan_v26.log"
+    }
+
+# ==============================================================================
+# 📝 MODULE 2: ПРОДВИНУТАЯ СИСТЕМА ЛОГИРОВАНИЯ (ADVANCED LOGGER)
+# ==============================================================================
+
+class TitanLogger:
+    """Кастомный логгер для отслеживания всех процессов в боте"""
+    
+    @staticmethod
+    def setup():
+        # Создаем директории, если их нет
+        for path in Config.DIRS.values():
+            if not os.path.exists(path):
+                os.makedirs(path)
+                
+        # Настраиваем формат логов
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(asctime)s] [%(levelname)s] [%(threadName)s] %(message)s",
+            handlers=[
+                logging.FileHandler(Config.FILES["log"], encoding="utf-8"),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+        logging.info(f"🚀 СИСТЕМА ИНИЦИАЛИЗИРОВАНА: {Config.VERSION}")
+
+    @staticmethod
+    def info(msg): logging.info(msg)
+    
+    @staticmethod
+    def warning(msg): logging.warning(msg)
+    
+    @staticmethod
+    def error(msg, exc_info=False): logging.error(msg, exc_info=exc_info)
+    
+    @staticmethod
+    def critical(msg): logging.critical(f"🔥 CRITICAL: {msg}")
+
+# ==============================================================================
+# 💾 MODULE 3: МЕНЕДЖЕР БАЗЫ ДАННЫХ (THREAD-SAFE DB MANAGER)
+# ==============================================================================
+
+class DatabaseManager:
+    """Безопасная работа с JSON базами данных с блокировками потоков (Lock)"""
+    _lock = Lock() # Защита от одновременной записи разными юзерами
+
+    @classmethod
+    def initialize_databases(cls):
+        """Создает пустые базы данных, если сервер был перезагружен"""
+        with cls._lock:
+            defaults = {
+                Config.FILES["users"]: {}, # {chat_id: {"username": str, "joined": date, "role": str}}
+                Config.FILES["admins"]: [Config.MAIN_ADMIN_ID],
+                Config.FILES["bans"]: [],
+                Config.FILES["stats"]: {"messages_total": 0, "ai_requests": 0, "images_generated": 0, "errors": 0},
+                Config.FILES["settings"]: {"maintenance_mode": False, "ai_enabled": True}
+            }
+            
+            for filepath, default_data in defaults.items():
+                if not os.path.exists(filepath):
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        json.dump(default_data, f, ensure_ascii=False, indent=4)
+            TitanLogger.info("✅ Базы данных проверены и готовы к работе.")
+
+    @classmethod
+    def read(cls, filepath):
+        """Безопасное чтение файла"""
+        with cls._lock:
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                TitanLogger.error(f"Ошибка чтения {filepath}: {e}")
+                return None
+
+    @classmethod
+    def write(cls, filepath, data):
+        """Безопасная запись в файл"""
+        with cls._lock:
+            try:
+                # Сначала пишем во временный файл, потом переименовываем (защита от краша при записи)
+                temp_file = filepath + ".tmp"
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                os.replace(temp_file, filepath)
+                return True
+            except Exception as e:
+                TitanLogger.error(f"Ошибка записи {filepath}: {e}")
+                return False
+
+    @classmethod
+    def add_user(cls, chat_id, username, first_name):
+        """Регистрация нового пользователя (PROFILE)"""
+        users = cls.read(Config.FILES["users"])
+        chat_id_str = str(chat_id)
+        
+        if chat_id_str not in users:
+            users[chat_id_str] = {
+                "id": chat_id,
+                "username": username or "Unknown",
+                "name": first_name or "User",
+                "joined": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "state": "IDLE", # Для машины состояний (ACTIONS & COMMANDS)
+                "temp_data": {}
+            }
+            cls.write(Config.FILES["users"], users)
+            TitanLogger.info(f"👤 НОВЫЙ ПОЛЬЗОВАТЕЛЬ: {chat_id} ({first_name})")
+            return True
+        return False
+
+# ==============================================================================
+# 🛡️ MODULE 4: СИСТЕМА БЕЗОПАСНОСТИ (SECURITY & PERMISSIONS)
+# ==============================================================================
+
+class SecurityManager:
+    """Управление доступом, банами и режимом тех. работ"""
+    
+    @staticmethod
+    def is_admin(chat_id):
+        if chat_id == Config.MAIN_ADMIN_ID:
+            return True
+        admins = DatabaseManager.read(Config.FILES["admins"])
+        return chat_id in admins if admins else False
+
+    @staticmethod
+    def is_banned(chat_id):
+        bans = DatabaseManager.read(Config.FILES["bans"])
+        return chat_id in bans if bans else False
+        
+    @staticmethod
+    def ban_user(chat_id):
+        bans = DatabaseManager.read(Config.FILES["bans"])
+        if chat_id not in bans:
+            bans.append(chat_id)
+            DatabaseManager.write(Config.FILES["bans"], bans)
+            TitanLogger.warning(f"🔨 ПОЛЬЗОВАТЕЛЬ {chat_id} ПОЛУЧИЛ БАН.")
+            return True
+        return False
+
+    @staticmethod
+    def check_access(chat_id):
+        """Комплексная проверка перед выполнением любого ACTIONS"""
+        settings = DatabaseManager.read(Config.FILES["settings"])
+        
+        if SecurityManager.is_banned(chat_id):
+            return {"status": False, "reason": "BANNED"}
+            
+        if settings.get("maintenance_mode", False) and not SecurityManager.is_admin(chat_id):
+            return {"status": False, "reason": "MAINTENANCE"}
+            
+        return {"status": True, "reason": "OK"}
+
+# ==============================================================================
+# ИНИЦИАЛИЗАЦИЯ ПЕРЕД СТАРТОМ FLASK
+# ==============================================================================
+TitanLogger.setup()
+DatabaseManager.initialize_databases()
+
 app = Flask(__name__)
 
-TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
-GEMINI_KEY = "AIzaSyAX89VW3n58WbISzEocxLVz1CnS7gq-eyk"
-ADMIN_ID = 5626603417 
-
-# Файловая система
-DATA_DIR = "data"
-if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR)
-
-USERS_FILE = f"{DATA_DIR}/users.txt"
-LOGS_FILE = f"{DATA_DIR}/logs.txt"
-BC_HISTORY = f"{DATA_DIR}/bc_history.json"
-SETTINGS_FILE = f"{DATA_DIR}/settings.json"
-
-# Оперативная память бота
-ADMIN_STATE = {}
-SYS_STATS = {"messages_processed": 0, "images_generated": 0, "errors": 0}
-
-# ==========================================
-# 🛡 БАЗОВЫЕ ФУНКЦИИ TELEGRAM API
-# ==========================================
-def api_call(method, payload, files=None):
-    """Универсальный и безопасный вызов API Телеграма"""
-    url = f"https://api.telegram.org/bot{TOKEN}/{method}"
-    try:
-        if files:
-            return requests.post(url, data=payload, files=files, timeout=15).json()
-        return requests.post(url, json=payload, timeout=15).json()
-    except Exception as e:
-        print(f"API Error: {e}")
-        return {}
-
-def send_tg(chat_id, text=None, photo=None, kb=None, reply_kb=None, doc=None, parse="HTML"):
-    p = {"chat_id": chat_id, "parse_mode": parse, "disable_web_page_preview": True}
-    if kb: p["reply_markup"] = {"inline_keyboard": kb}
-    if reply_kb: p["reply_markup"] = reply_kb
-    
-    if doc: return api_call("sendDocument", p, files={'document': open(doc, 'rb')})
-    if photo:
-        p.update({"photo": photo, "caption": text})
-        return api_call("sendPhoto", p)
-    p["text"] = text
-    return api_call("sendMessage", p)
-
-def edit_tg(chat_id, mid, text, kb=None):
-    p = {"chat_id": chat_id, "message_id": mid, "text": text, "parse_mode": "HTML"}
-    if kb: p["reply_markup"] = {"inline_keyboard": kb}
-    api_call("editMessageText", p)
-
-def delete_tg(chat_id, mid):
-    api_call("deleteMessage", {"chat_id": chat_id, "message_id": mid})
-
-def send_action(chat_id, action):
-    api_call("sendChatAction", {"chat_id": chat_id, "action": action})
-
-# ==========================================
-# 🎨 ВИЗУАЛЬНЫЕ АНИМАЦИИ (TITAN PROGRESS)
-# ==========================================
-def titan_progress(chat_id, task_name):
-    """Элитный прогресс-бар с плавной анимацией"""
-    SYS_STATS["messages_processed"] += 1
-    bars = [
-        "<code>[▇░░░░░░░░░] 12%</code>",
-        "<code>[▇▇▇░░░░░░░] 34%</code>",
-        "<code>[▇▇▇▇▇▇░░░░] 67%</code>",
-        "<code>[▇▇▇▇▇▇▇▇▇░] 91%</code>",
-        "<code>[▇▇▇▇▇▇▇▇▇▇] 100%</code>"
-    ]
-    res = send_tg(chat_id, f"💠 <b>{task_name}</b>\n{bars[0]}")
-    mid = res.get("result", {}).get("message_id")
-    if mid:
-        for b in bars[1:]:
-            time.sleep(0.3)
-            edit_tg(chat_id, mid, f"💠 <b>{task_name}</b>\n{b}")
-        return mid
-    return None
-
-# ==========================================
-# 🧠 ЯДРО НЕЙРОСЕТЕЙ (GEMINI & POLLINATIONS)
-# ==========================================
-def get_ai(prompt, img_b64=None, voice_b64=None):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
-    parts = [{"text": prompt}]
-    if img_b64: parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
-    if voice_b64: parts.append({"inline_data": {"mime_type": "audio/ogg", "data": voice_b64}})
-    
-    try:
-        r = requests.post(url, json={"contents": [{"parts": parts}]}, timeout=20).json()
-        if 'candidates' in r: return r['candidates'][0]['content']['parts'][0]['text']
-        SYS_STATS["errors"] += 1
-        return "⚠️ <i>Ошибка генерации ответа. ИИ перегружен.</i>"
-    except Exception as e:
-        SYS_STATS["errors"] += 1
-        return f"🛰 <b>Сбой связи с ядром:</b> {str(e)}"
-
-def log_event(chat_id, data):
-    with open(LOGS_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ID:{chat_id} | {data}\n")
-
-# ==========================================
-# 👑 УЛЬТИМАТИВНАЯ ПАНЕЛЬ АДМИНИСТРАТОРА
-# ==========================================
-def get_admin_menu(menu_type="main"):
-    """Многоуровневая архитектура админ-панели (50+ логических узлов)"""
-    if menu_type == "main":
-        return [
-            [{"text": "📢 Мега-Рассылка", "callback_data": "adm_bc_menu"}, {"text": "👥 Юзеры & База", "callback_data": "adm_users"}],
-            [{"text": "📊 Глубокая Аналитика", "callback_data": "adm_stats"}, {"text": "🛡 Безопасность", "callback_data": "adm_sec"}],
-            [{"text": "⚙️ Настройки Системы", "callback_data": "adm_settings"}, {"text": "📑 Логи", "callback_data": "adm_logs"}]
-        ]
-    elif menu_type == "bc":
-        return [
-            [{"text": "✉️ Создать рассылку", "callback_data": "adm_bc_start"}, {"text": "🗑 Откатить (Удалить)", "callback_data": "adm_bc_rev"}],
-            [{"text": "🔙 В главное меню", "callback_data": "adm_main"}]
-        ]
-    elif menu_type == "users":
-        return [
-            [{"text": "📥 Скачать БД", "callback_data": "adm_db_dl"}, {"text": "🧹 Очистить мертвых", "callback_data": "adm_db_clean"}],
-            [{"text": "🔙 В главное меню", "callback_data": "adm_main"}]
-        ]
-    elif menu_type == "sec":
-        return [
-            [{"text": "🔒 Закрыть бота (Тех.работы)", "callback_data": "adm_lock"}, {"text": "🔓 Открыть бота", "callback_data": "adm_unlock"}],
-            [{"text": "🔙 В главное меню", "callback_data": "adm_main"}]
-        ]
-
-# ==========================================
-# 🌐 ГЛАВНЫЙ ВЕБХУК (РОУТЕР ЗАПРОСОВ)
-# ==========================================
-@app.route('/', methods=['POST', 'GET'])
-def titan_core():
-    if request.method == 'GET': return "TITAN MAX V30 ACTIVE", 200
-    
-    data = request.get_json()
-    if not data: return "OK", 200
-
-    # ------------------------------------------
-    # 🎛 ОБРАБОТКА ИНЛАЙН КНОПОК АДМИНКИ
-    # ------------------------------------------
-    if "callback_query" in data:
-        cb = data["callback_query"]
-        cid = cb["message"]["chat"]["id"]
-        call = cb["data"]
-        mid = cb["message"]["message_id"]
-        
-        if cid == ADMIN_ID:
-            # Навигация по меню
-            if call == "adm_main":
-                edit_tg(cid, mid, "👑 <b>TITAN MAX ОСНОВНАЯ ПАНЕЛЬ</b>\nВыберите модуль:", kb=get_admin_menu("main"))
-            elif call == "adm_bc_menu":
-                edit_tg(cid, mid, "📢 <b>МОДУЛЬ РАССЫЛОК</b>", kb=get_admin_menu("bc"))
-            elif call == "adm_users":
-                edit_tg(cid, mid, "👥 <b>УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ</b>", kb=get_admin_menu("users"))
-            elif call == "adm_sec":
-                edit_tg(cid, mid, "🛡 <b>МОДУЛЬ БЕЗОПАСНОСТИ</b>", kb=get_admin_menu("sec"))
-            
-            # Действия
-            elif call == "adm_bc_start":
-                ADMIN_STATE[cid] = "waiting_broadcast"
-                send_tg(cid, "📝 <b>Режим рассылки активирован.</b>\nОтправь сообщение (текст, фото или видео), и его получат все.")
-            elif call == "adm_bc_rev":
-                if os.path.exists(BC_HISTORY):
-                    with open(BC_HISTORY, "r") as f: h = json.load(f)
-                    success = 0
-                    for u, m in h.items():
-                        delete_tg(u, m)
-                        success += 1
-                    os.remove(BC_HISTORY)
-                    send_tg(cid, f"✅ <b>Откат успешен!</b>\nУдалено сообщений: {success}")
-                else: send_tg(cid, "❌ История пуста.")
-            elif call == "adm_db_dl":
-                send_tg(cid, "📥 <b>База данных пользователей:</b>", doc=USERS_FILE)
-            elif call == "adm_logs":
-                send_tg(cid, "📑 <b>Системные логи:</b>", doc=LOGS_FILE)
-            elif call == "adm_stats":
-                with open(USERS_FILE, "r") as f: u_count = len(f.read().splitlines())
-                stats = (f"📊 <b>ГЛУБОКАЯ АНАЛИТИКА:</b>\n\n"
-                         f"👥 Всего пользователей: <code>{u_count}</code>\n"
-                         f"💬 Обработано запросов: <code>{SYS_STATS['messages_processed']}</code>\n"
-                         f"🎨 Создано картинок: <code>{SYS_STATS['images_generated']}</code>\n"
-                         f"⚠️ Ошибок ядра: <code>{SYS_STATS['errors']}</code>\n"
-                         f"⏱ Uptime: <b>100%</b>")
-                edit_tg(cid, mid, stats, kb=[[{"text": "🔙 Назад", "callback_data": "adm_main"}]])
-            elif call in ["adm_lock", "adm_unlock", "adm_db_clean", "adm_settings"]:
-                send_tg(cid, "⚠️ <i>Функция находится в разработке (V31 Update)</i>")
-        return "OK", 200
-
-    # ------------------------------------------
-    # 📩 ОБРАБОТКА ВХОДЯЩИХ СООБЩЕНИЙ
-    # ------------------------------------------
-    if "message" not in data: return "OK", 200
-    msg = data["message"]
-    chat_id = msg["chat"]["id"]
-    text = msg.get("text", "")
-    caption = msg.get("caption", "")
-    full_text = (text + caption).strip()
-
-    # Регистрация пользователя
-    if not os.path.exists(USERS_FILE): open(USERS_FILE, "a").close()
-    with open(USERS_FILE, "r+") as f:
-        if str(chat_id) not in f.read(): f.write(f"{chat_id}\n")
-    
-    if full_text: log_event(chat_id, full_text)
-
-    # --- СТАРТОВОЕ МЕНЮ (МЕГА-КРАСИВОЕ) ---
-    if text == "/start":
-        welcome = (
-            "🌌 <b>ДОБРО ПОЖАЛОВАТЬ В TITAN AI</b>\n\n"
-            "Я — нейросеть нового поколения. Мои возможности безграничны:\n\n"
-            "🤖 <b>Интеллект:</b> Отвечаю на любые вопросы\n"
-            "🎨 <b>Художник:</b> Создаю арты по команде <i>Нарисуй</i>\n"
-            "🎙 <b>Слух:</b> Распознаю голосовые сообщения\n"
-            "👁 <b>Зрение:</b> Анализирую любые фотографии\n\n"
-            "<i>Выберите действие в меню ниже:</i>"
-        )
-        rk = {
+# КОНЕЦ ЧАСТИ 1. ОЖИДАНИЕ СЛЕДУЮЩИХ МОДУЛЕЙ...
+       rk = {
             "keyboard": [
                 [{"text": "🚀 Как пользоваться?"}, {"text": "👤 Мой профиль"}],
                 [{"text": "💎 Premium возможности"}, {"text": "👨‍💻 Связь с создателем"}]
@@ -338,4 +329,476 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 СИСТЕМА TITAN ЗАПУСКАЕТСЯ НА ПОРТУ {port}...")
     app.run(host='0.0.0.0', port=port)
+
+
+# ==============================================================================
+# 📡 MODULE 5: ТЕЛЕГРАМ-ИНТЕРФЕЙС УЛЬТИМАТИВНОГО УРОВНЯ (TG_WRAPPER)
+# ==============================================================================
+
+class TelegramInterface:
+    """Универсальный контроллер для работы с Telegram API с защитой от спама и ошибок"""
+    BASE_URL = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/"
+
+    @classmethod
+    def call(cls, method, payload=None, files=None):
+        """Единая точка входа для всех запросов с автоматическими повторами"""
+        url = cls.BASE_URL + method
+        for attempt in range(Config.MAX_RETRIES):
+            try:
+                if files:
+                    response = requests.post(url, data=payload, files=files, timeout=Config.REQUEST_TIMEOUT)
+                else:
+                    response = requests.post(url, json=payload, timeout=Config.REQUEST_TIMEOUT)
+                
+                result = response.json()
+                if result.get("ok"):
+                    return result
+                TitanLogger.warning(f"⚠️ TG API Error ({method}): {result.get('description')}")
+                if result.get("error_code") == 429: # Flood limit
+                    time.sleep(result.get("parameters", {}).get("retry_after", 1))
+            except Exception as e:
+                TitanLogger.error(f"❌ Attempt {attempt+1} failed for {method}: {e}")
+                time.sleep(0.5)
+        return {"ok": False}
+
+    @classmethod
+    def send_message(cls, chat_id, text, kb=None, rkb=None, parse_mode="HTML", preview=False):
+        """Отправка сообщений с поддержкой Inline и Reply клавиатур"""
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": not preview
+        }
+        if kb: payload["reply_markup"] = {"inline_keyboard": kb}
+        if rkb: payload["reply_markup"] = rkb
+        return cls.call("sendMessage", payload)
+
+    @classmethod
+    def send_photo(cls, chat_id, photo_url_or_id, caption=None, kb=None, rkb=None):
+        """Отправка фото (по URL, ID или файлу)"""
+        payload = {"chat_id": chat_id, "photo": photo_url_or_id, "parse_mode": "HTML"}
+        if caption: payload["caption"] = caption
+        if kb: payload["reply_markup"] = {"inline_keyboard": kb}
+        if rkb: payload["reply_markup"] = rkb
+        return cls.call("sendPhoto", payload)
+
+    @classmethod
+    def delete_message(cls, chat_id, message_id):
+        return cls.call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+
+    @classmethod
+    def send_action(cls, chat_id, action="typing"):
+        """Визуальный эффект: 'печатает', 'отправляет фото' и т.д."""
+        return cls.call("sendChatAction", {"chat_id": chat_id, "action": action})
+
+# ==============================================================================
+# ⌨️ MODULE 6: КОНСТРУКТОР КЛАВИАТУР (UX/UI BUILDER)
+# ==============================================================================
+
+class KeyboardFactory:
+    """Генератор профессиональных интерфейсов для ACTIONS & COMMANDS"""
+    
+    @staticmethod
+    def main_menu(is_admin=False):
+        """Главная нижняя панель управления"""
+        buttons = [
+            [{"text": "🤖 Нейросеть Gemini"}, {"text": "🎨 Создать Арт"}],
+            [{"text": "👤 Мой Профиль"}, {"text": "🛠 Помощь"}]
+        ]
+        if is_admin:
+            buttons.append([{"text": "👑 Панель Управления"}])
+        return {"keyboard": buttons, "resize_keyboard": True, "persistent": True}
+
+    @staticmethod
+    def cancel_menu():
+        """Кнопка отмены, которая всегда под рукой при активных действиях"""
+        return {"keyboard": [[{"text": "❌ ОТМЕНИТЬ ДЕЙСТВИЕ"}]], "resize_keyboard": True}
+
+    @staticmethod
+    def admin_inline():
+        """Многоуровневое инлайн-меню для админки"""
+        return [
+            [{"text": "📢 Рассылка ОМЕГА", "callback_data": "adm_broadcast"}, {"text": "🗑 Откат", "callback_data": "adm_rollback"}],
+            [{"text": "📊 Статистика", "callback_data": "adm_stats"}, {"text": "🛡️ Безопасность", "callback_data": "adm_security"}],
+            [{"text": "📑 Логи", "callback_data": "adm_logs"}, {"text": "⚙️ Конфиг ИИ", "callback_data": "adm_ai_config"}]
+        ]
+
+# ==============================================================================
+# 🔄 MODULE 7: МАШИНА СОСТОЯНИЙ (FINITE STATE MACHINE - FSM)
+# ==============================================================================
+
+class FSMContext:
+    """Управление текущими шагами пользователя и временными данными"""
+    
+    @staticmethod
+    def set_state(chat_id, state, data=None):
+        """Установить новый статус для юзера (например, 'ожидание текста для ИИ')"""
+        users = DatabaseManager.read(Config.FILES["users"])
+        cid_str = str(chat_id)
+        if cid_str in users:
+            users[cid_str]["state"] = state
+            if data is not None:
+                users[cid_str]["temp_data"] = data
+            DatabaseManager.write(Config.FILES["users"], users)
+            return True
+        return False
+
+    @staticmethod
+    def get_state(chat_id):
+        users = DatabaseManager.read(Config.FILES["users"])
+        user = users.get(str(chat_id))
+        return (user.get("state", "IDLE"), user.get("temp_data", {})) if user else ("IDLE", {})
+
+    @staticmethod
+    def reset(chat_id):
+        """Полный сброс в начальное состояние (IDLE)"""
+        return FSMContext.set_state(chat_id, "IDLE", {})
+
+# ==============================================================================
+# 🎭 MODULE 8: СИСТЕМА ВИЗУАЛИЗАЦИИ ПРОЦЕССОВ (ANIMATION ENGINE)
+# ==============================================================================
+
+class TitanVisuals:
+    """Создание эффекта живого взаимодействия через анимации"""
+    
+    @staticmethod
+    def progress_bar(chat_id, label):
+        """Профессиональный индикатор загрузки"""
+        res = TelegramInterface.send_message(chat_id, f"📡 <b>{label}</b>\n<code>[▒▒▒▒▒▒▒▒▒▒] 0%</code>")
+        mid = res.get("result", {}).get("message_id")
         
+        if mid:
+            # Имитация этапов обработки
+            steps = [
+                (30, "███▒▒▒▒▒▒▒"),
+                (60, "██████▒▒▒▒"),
+                (90, "█████████▒"),
+                (100, "██████████")
+            ]
+            for p, bar in steps:
+                time.sleep(0.3)
+                TelegramInterface.call("editMessageText", {
+                    "chat_id": chat_id,
+                    "message_id": mid,
+                    "text": f"📡 <b>{label}</b>\n<code>[{bar}] {p}%</code>",
+                    "parse_mode": "HTML"
+                })
+            return mid
+        return None
+
+# ==============================================================================
+# ПРОВЕРКА ЧАСТИ 2
+# ==============================================================================
+TitanLogger.info("✅ ЧАСТЬ 2: Интерфейс и FSM успешно интегрированы.")
+# ==============================================================================
+# 🧠 MODULE 9: ИНТЕГРАЦИЯ НЕЙРОСЕТЕВОГО ЯДРА (AI CONTROLLER)
+# ==============================================================================
+
+class GeminiController:
+    """Управление запросами к Gemini 1.5 Flash с многоуровневой проверкой"""
+    
+    @staticmethod
+    def process_request(prompt, image_b64=None):
+        """Отправка данных в Gemini и получение чистого ответа"""
+        DatabaseManager.write(Config.FILES["stats"], 
+            {**DatabaseManager.read(Config.FILES["stats"]), "ai_requests": DatabaseManager.read(Config.FILES["stats"])["ai_requests"] + 1})
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={Config.GEMINI_API_KEY}"
+        
+        # Формируем структуру запроса (Text + Vision)
+        parts = [{"text": prompt}]
+        if image_b64:
+            parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
+            
+        payload = {"contents": [{"parts": parts}]}
+        
+        try:
+            response = requests.post(url, json=payload, timeout=Config.REQUEST_TIMEOUT)
+            res_data = response.json()
+            
+            if 'candidates' in res_data:
+                return res_data['candidates'][0]['content']['parts'][0]['text']
+            
+            TitanLogger.warning(f"⚠️ Gemini Response Issue: {res_data}")
+            return "❌ <b>Ошибка ИИ:</b> Не удалось сформировать ответ. Попробуйте другой запрос."
+        except Exception as e:
+            TitanLogger.error(f"❌ Gemini Connection Error: {e}")
+            return "🛰 <b>Ошибка связи:</b> Сервер нейросети временно недоступен."
+
+# ==============================================================================
+# 🚀 MODULE 10: ГЛАВНЫЙ ОБРАБОТЧИК WEBHOOK (MAIN GATEWAY)
+# ==============================================================================
+
+@app.route('/', methods=['POST', 'GET'])
+def titan_webhook_gateway():
+    """Точка входа для всех событий из Telegram (Webhook)"""
+    if request.method == 'GET':
+        return f"<h1>SYSTEM {Config.VERSION} ACTIVE</h1>", 200
+        
+    try:
+        update = request.get_json()
+        if not update: return "OK", 200
+        
+        # 1. ОБРАБОТКА CALLBACK QUERIES (Инлайн-кнопки админки)
+        if "callback_query" in update:
+            process_callback(update["callback_query"])
+            return "OK", 200
+            
+        # 2. ОБРАБОТКА ОБЫЧНЫХ СООБЩЕНИЙ
+        if "message" in update:
+            process_message(update["message"])
+            return "OK", 200
+            
+    except Exception as e:
+        TitanLogger.error(f"🔥 CRITICAL CRASH IN GATEWAY: {e}\n{traceback.format_exc()}")
+        
+    return "OK", 200
+
+# ==============================================================================
+# 🛠 MODULE 11: ЛОГИКА ОБРАБОТКИ СООБЩЕНИЙ (MESSAGE PROCESSOR)
+# ==============================================================================
+
+def process_message(msg):
+    """Распределитель команд, текста и медиа для PROFILE & ACTIONS"""
+    chat_id = msg["chat"]["id"]
+    user_id = msg["from"]["id"]
+    text = msg.get("text", "")
+    caption = msg.get("caption", "")
+    full_text = (text or caption or "").strip()
+    
+    # Регистрация (PROFILE)
+    DatabaseManager.add_user(user_id, msg["from"].get("username"), msg["from"].get("first_name"))
+    
+    # Проверка доступа (SECURITY)
+    access = SecurityManager.check_access(user_id)
+    if not access["status"]:
+        if access["reason"] == "BANNED":
+            TelegramInterface.send_message(chat_id, "🚫 <b>Доступ заблокирован.</b> Обратитесь к администратору.")
+        return
+
+    # Получаем текущее состояние (FSM)
+    state, temp_data = FSMContext.get_state(user_id)
+    is_admin = SecurityManager.is_admin(user_id)
+
+    # --- БЛОК УНИВЕРСАЛЬНОЙ ОТМЕНЫ ---
+    if full_text == "❌ ОТМЕНИТЬ ДЕЙСТВИЕ":
+        FSMContext.reset(user_id)
+        TelegramInterface.send_message(chat_id, "✅ <b>Действие отменено.</b> Возврат в главное меню.", 
+                                      rkb=KeyboardFactory.main_menu(is_admin))
+        return
+
+    # --- ОБРАБОТКА СОСТОЯНИЙ (FSM ACTIONS) ---
+    if state != "IDLE":
+        handle_state_action(chat_id, user_id, state, msg, full_text, is_admin)
+        return
+
+    # --- ГЛАВНЫЕ КОМАНДЫ (COMMANDS) ---
+    if full_text == "/start" or full_text == "🏠 Главное меню":
+        FSMContext.reset(user_id)
+        welcome = f"🌌 <b>TITAN SYSTEM {Config.VERSION}</b>\n\nДобро пожаловать. Выберите действие:"
+        TelegramInterface.send_message(chat_id, welcome, rkb=KeyboardFactory.main_menu(is_admin))
+        
+    elif full_text == "🤖 Нейросеть Gemini":
+        FSMContext.set_state(user_id, "WAITING_AI_PROMPT")
+        TelegramInterface.send_message(chat_id, "🧠 <b>Режим ИИ активирован.</b>\nВведите ваш вопрос или отправьте фото для анализа:", 
+                                      rkb=KeyboardFactory.cancel_menu())
+
+    elif full_text == "🎨 Создать Арт":
+        FSMContext.set_state(user_id, "WAITING_ART_PROMPT")
+        TelegramInterface.send_message(chat_id, "🎨 <b>Синтез изображений.</b>\nОпишите, что нужно нарисовать:", 
+                                      rkb=KeyboardFactory.cancel_menu())
+
+    elif full_text == "👤 Мой Профиль":
+        u_data = DatabaseManager.read(Config.FILES["users"]).get(str(user_id), {})
+        profile = (f"👤 <b>ВАШ ПРОФИЛЬ</b>\n━━━━━━━━━━━━━━\n"
+                   f"🆔 ID: <code>{user_id}</code>\n"
+                   f"🛡 Статус: {'Администратор' if is_admin else 'Пользователь'}\n"
+                   f"📅 Регистрация: {u_data.get('joined', 'Неизвестно')}")
+        TelegramInterface.send_message(chat_id, profile)
+
+    elif full_text == "👑 Панель Управления" and is_admin:
+        TelegramInterface.send_message(chat_id, "👑 <b>TITAN ADMIN PANEL</b>\nВыберите модуль управления:", 
+                                      kb=KeyboardFactory.admin_inline())
+
+    # --- СВОБОДНЫЙ ВВОД (AI AUTO-RESPONSE) ---
+    elif full_text:
+        TelegramInterface.send_action(chat_id, "typing")
+        ans = GeminiController.process_request(full_text)
+        TelegramInterface.send_message(chat_id, ans)
+
+# ==============================================================================
+# 🎮 MODULE 12: ОБРАБОТЧИК СОСТОЯНИЙ (STATE HANDLER)
+# ==============================================================================
+
+def handle_state_action(chat_id, user_id, state, msg, text, is_admin):
+    """Логика выполнения действий в зависимости от FSM"""
+    
+    if state == "WAITING_AI_PROMPT":
+        mid = TitanVisuals.progress_bar(chat_id, "АНАЛИЗ ИИ")
+        img_b64 = None
+        if "photo" in msg:
+            # Логика получения фото (будет в ЧАСТИ 4)
+            pass
+        
+        ans = GeminiController.process_request(text, img_b64)
+        if mid: TelegramInterface.delete_message(chat_id, mid)
+        TelegramInterface.send_message(chat_id, ans, rkb=KeyboardFactory.main_menu(is_admin))
+        FSMContext.reset(user_id)
+
+    elif state == "WAITING_ART_PROMPT":
+        mid = TitanVisuals.progress_bar(chat_id, "СИНТЕЗ АРТА")
+        # Здесь будет интеграция Pollinations
+        img_url = f"https://image.pollinations.ai/prompt/{text}?nologo=true&width=1024&height=1024"
+        TelegramInterface.send_photo(chat_id, img_url, caption=f"✅ <b>Готово!</b>\nЗапрос: <i>{text}</i>", 
+                                    rkb=KeyboardFactory.main_menu(is_admin))
+        if mid: TelegramInterface.delete_message(chat_id, mid)
+        FSMContext.reset(user_id)
+
+    elif state == "WAITING_BC_CONTENT" and is_admin:
+        # Логика рассылки (будет в ЧАСТИ 4)
+        pass
+
+# КОНЕЦ ЧАСТИ 3. ПРОЦЕССОР СОЕДИНЕН С ОРГАНАМИ УПРАВЛЕНИЯ.
+
+
+# ==============================================================================
+# 🛠 MODULE 13: АДМИНИСТРАТИВНЫЙ КОНТРОЛЛЕР (ADMIN COMMAND CENTER)
+# ==============================================================================
+
+def process_callback(cb):
+    """Обработка нажатий на инлайн-кнопки (Интерфейс ACTIONS)"""
+    user_id = cb["from"]["id"]
+    chat_id = cb["message"]["chat"]["id"]
+    mid = cb["message"]["message_id"]
+    data = cb["data"]
+
+    if not SecurityManager.is_admin(user_id):
+        TelegramInterface.call("answerCallbackQuery", {"callback_query_id": cb["id"], "text": "❌ Нет доступа"})
+        return
+
+    if data == "adm_broadcast":
+        FSMContext.set_state(user_id, "WAITING_BC_CONTENT")
+        TelegramInterface.send_message(chat_id, "📢 <b>РЕЖИМ РАССЫЛКИ</b>\nОтправьте текст или фото для всех юзеров:", 
+                                      rkb=KeyboardFactory.cancel_menu())
+        TelegramInterface.call("answerCallbackQuery", {"callback_query_id": cb["id"]})
+
+    elif data == "adm_stats":
+        st = DatabaseManager.read(Config.FILES["stats"])
+        us = len(DatabaseManager.read(Config.FILES["users"]))
+        report = (f"📊 <b>TITAN GLOBAL STATS</b>\n━━━━━━━━━━━━━━\n"
+                  f"👤 Всего юзеров: <code>{us}</code>\n"
+                  f"🧠 Запросов к ИИ: <code>{st['ai_requests']}</code>\n"
+                  f"🎨 Артов создано: <code>{st['images_generated']}</code>\n"
+                  f"⚠️ Ошибок лога: <code>{st['errors']}</code>")
+        TelegramInterface.call("editMessageText", {"chat_id": chat_id, "message_id": mid, "text": report, 
+                                                   "parse_mode": "HTML", "reply_markup": {"inline_keyboard": [[{"text": "🔙 Назад", "callback_data": "adm_back"}]]}})
+
+    elif data == "adm_logs":
+        TelegramInterface.call("sendDocument", {"chat_id": chat_id, "document": open(Config.FILES["log"], 'rb'), "caption": "📑 Системный лог V26.0"})
+
+    elif data == "adm_back":
+        TelegramInterface.call("editMessageText", {"chat_id": chat_id, "message_id": mid, "text": "👑 <b>TITAN ADMIN PANEL</b>", 
+                                                   "parse_mode": "HTML", "reply_markup": {"inline_keyboard": KeyboardFactory.admin_inline()}})
+
+# ==============================================================================
+# 📡 MODULE 14: МЕНЕДЖЕР МЕДИА-ДАННЫХ (FILE & MEDIA ENGINE)
+# ==============================================================================
+
+class MediaManager:
+    """Загрузка и конвертация изображений для анализа Gemini"""
+    
+    @staticmethod
+    def get_photo_b64(photo_list):
+        """Получение фото самого высокого качества и перевод в Base64"""
+        try:
+            file_id = photo_list[-1]["file_id"]
+            file_info = TelegramInterface.call("getFile", {"file_id": file_id})
+            if file_info.get("ok"):
+                file_path = file_info["result"]["file_path"]
+                download_url = f"https://api.telegram.org/file/bot{Config.BOT_TOKEN}/{file_path}"
+                img_data = requests.get(download_url).content
+                return base64.b64encode(img_data).decode('utf-8')
+        except Exception as e:
+            TitanLogger.error(f"Ошибка загрузки фото: {e}")
+        return None
+
+# ==============================================================================
+# 📢 MODULE 15: СИСТЕМА МАССОВОГО ВЕЩАНИЯ (BROADCAST ENGINE)
+# ==============================================================================
+
+def execute_broadcast(admin_id, msg):
+    """Рассылка контента по всей базе PROFILE"""
+    users = DatabaseManager.read(Config.FILES["users"])
+    success = 0
+    failed = 0
+    
+    text = msg.get("text") or msg.get("caption")
+    photo = msg.get("photo")[-1]["file_id"] if "photo" in msg else None
+    
+    mid = TelegramInterface.send_message(admin_id, "🚀 <b>Рассылка запущена...</b>")["result"]["message_id"]
+    
+    for uid in users:
+        try:
+            if photo:
+                res = TelegramInterface.send_photo(uid, photo, caption=text)
+            else:
+                res = TelegramInterface.send_message(uid, text)
+            
+            if res.get("ok"): success += 1
+            else: failed += 1
+            time.sleep(0.05) # Защита от Flood Limit
+        except:
+            failed += 1
+            
+    TelegramInterface.call("editMessageText", {"chat_id": admin_id, "message_id": mid, 
+                                               "text": f"✅ <b>Рассылка завершена!</b>\n\n📈 Успешно: {success}\n📉 Ошибок: {failed}", "parse_mode": "HTML"})
+
+# ==============================================================================
+# 🛠 MODULE 16: КОРРЕКТИРОВКА STATE HANDLER (ОБНОВЛЕНИЕ ИЗ ЧАСТИ 3)
+# ==============================================================================
+
+def handle_state_action(chat_id, user_id, state, msg, text, is_admin):
+    """Дополненная логика состояний для обработки фото и рассылки"""
+    
+    if state == "WAITING_AI_PROMPT":
+        mid = TitanVisuals.progress_bar(chat_id, "АНАЛИЗ ДАННЫХ")
+        img_b64 = None
+        if "photo" in msg:
+            img_b64 = MediaManager.get_photo_b64(msg["photo"])
+        
+        ans = GeminiController.process_request(text or "Что на этом фото?", img_b64)
+        if mid: TelegramInterface.delete_message(chat_id, mid)
+        TelegramInterface.send_message(chat_id, ans, rkb=KeyboardFactory.main_menu(is_admin))
+        FSMContext.reset(user_id)
+
+    elif state == "WAITING_BC_CONTENT" and is_admin:
+        execute_broadcast(user_id, msg)
+        FSMContext.reset(user_id)
+        TelegramInterface.send_message(chat_id, "🏠 Возврат в меню", rkb=KeyboardFactory.main_menu(True))
+
+    elif state == "WAITING_ART_PROMPT":
+        mid = TitanVisuals.progress_bar(chat_id, "ГЕНЕРАЦИЯ АРТА")
+        img_url = f"https://image.pollinations.ai/prompt/{text}?nologo=true&width=1024&height=1024"
+        DatabaseManager.write(Config.FILES["stats"], 
+            {**DatabaseManager.read(Config.FILES["stats"]), "images_generated": DatabaseManager.read(Config.FILES["stats"])["images_generated"] + 1})
+        
+        TelegramInterface.send_photo(chat_id, img_url, caption=f"🎨 <b>Ваш арт готов!</b>\nЗапрос: <i>{text}</i>", 
+                                    rkb=KeyboardFactory.main_menu(is_admin))
+        if mid: TelegramInterface.delete_message(chat_id, mid)
+        FSMContext.reset(user_id)
+
+# ==============================================================================
+# 🏁 FINAL MODULE: ЗАПУСК СЕРВЕРА
+# ==============================================================================
+
+if __name__ == "__main__":
+    # Финальная проверка перед стартом
+    TitanLogger.info("🚀 Сборка V26.0 OMEGA завершена. Запуск сервера...")
+    
+    # Порт для Render
+    port = int(os.environ.get("PORT", 5000))
+    
+    # Запуск Flask
+    app.run(host='0.0.0.0', port=port)
+    
