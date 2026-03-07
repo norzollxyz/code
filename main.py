@@ -5,84 +5,72 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-# ================= НАСТРОЙКИ =================
+# ================= НАСТРОЙКИ (НЕ ТРОГАЙ) =================
 TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
 GEMINI_KEY = "AIzaSyAX89VW3n58WbISzEocxLVz1CnS7gq-eyk"
+# =========================================================
 
-def call_gemini_ultra(prompt, img_b64=None):
-    """Мощный интеллект для учебы и общения"""
+def ask_ai_unlimited(prompt, img_b64=None):
+    """Умная функция: пробует Gemini, если не выходит — идет через резерв"""
+    # 1. Пробуем Gemini (Основной интеллект)
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
+    sys_msg = "Ты ОЛИМП. Помогай с учебой, решай задачи по фото, пиши код. Отвечай кратко и четко."
     
-    system_instruction = (
-        "Ты — ОЛИМП, элитный ИИ-помощник. Твои суперспособности: "
-        "1. Решать любые задачи, контрольные и домашку по фото или тексту. "
-        "2. Писать сочинения, коды на Python и переводить тексты. "
-        "3. Общаться как реальный бро, помогать советами. "
-        "Отвечай максимально точно и понятно."
-    )
-
-    payload = {
-        "contents": [{"parts": [{"text": f"{system_instruction}\n\nЗапрос: {prompt}"}]}],
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
-    }
-
+    payload = {"contents": [{"parts": [{"text": f"{sys_msg}\n\nЗапрос: {prompt}"}]}]}
     if img_b64:
         payload["contents"][0]["parts"].append({"inline_data": {"mime_type": "image/jpeg", "data": img_b64}})
-
+    
     try:
-        res = requests.post(url, json=payload, timeout=30).json()
+        res = requests.post(url, json=payload, timeout=15).json()
         return res['candidates'][0]['content']['parts'][0]['text']
     except:
-        return "🛰 ОЛИМП: Ошибка связи с ядром. Попробуй еще раз через минуту!"
+        # 2. РЕЗЕРВНЫЙ КАНАЛ (Если Google заблочен)
+        try:
+            backup_url = f"https://text.pollinations.ai/{prompt} (отвечай на русском)"
+            return requests.get(backup_url, timeout=15).text
+        except:
+            return "🛰 ОЛИМП: Все системы перегружены. Попробуй через 2 минуты."
 
-def send_tg(chat_id, text, photo_url=None):
+def send_tg(chat_id, text, photo=None):
     url = f"https://api.telegram.org/bot{TOKEN}/"
-    if photo_url:
-        requests.post(url + "sendPhoto", json={"chat_id": chat_id, "photo": photo_url, "caption": text, "parse_mode": "HTML"})
+    if photo:
+        requests.post(url + "sendPhoto", json={"chat_id": chat_id, "photo": photo, "caption": text, "parse_mode": "HTML"})
     else:
         requests.post(url + "sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
 
 @app.route('/', methods=['POST', 'GET'])
 def webhook():
-    if request.method == 'GET': return "ОЛИМП в сети!", 200
+    if request.method == 'GET': return "ОЛИМП В СЕТИ", 200
     data = request.get_json()
     if not data or "message" not in data: return "OK", 200
     
     msg = data["message"]
     chat_id = msg["chat"]["id"]
     
-    # --- РАБОТА С ФОТО (УЧЕБА / КОНТРОЛЬНЫЕ) ---
+    # ФОТО (Задачи, контрольные)
     if "photo" in msg:
-        caption = msg.get("caption", "Реши задачу на фото или объясни, что это.")
-        send_tg(chat_id, "📥 <b>ОЛИМП сканирует данные...</b>")
+        send_tg(chat_id, "📥 <b>Сканирую...</b>")
         try:
             file_id = msg["photo"][-1]["file_id"]
-            file_res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}").json()
-            img_data = requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{file_res['result']['file_path']}").content
-            img_b64 = base64.b64encode(img_data).decode('utf-8')
-            send_tg(chat_id, f"🧠 <b>Готово:</b>\n\n{call_gemini_ultra(caption, img_b64)}")
+            f_info = requests.get(f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}").json()
+            img_url = f"https://api.telegram.org/file/bot{TOKEN}/{f_info['result']['file_path']}"
+            img_b64 = base64.b64encode(requests.get(img_url).content).decode('utf-8')
+            send_tg(chat_id, f"🧠 <b>ОЛИМП выдал решение:</b>\n\n{ask_ai_unlimited(msg.get('caption', 'Реши это'), img_b64)}")
         except:
-            send_tg(chat_id, "⚠️ Ошибка при чтении фото.")
+            send_tg(chat_id, "⚠️ Ошибка фото. Пришли еще раз.")
         return "OK", 200
 
-    # --- ТЕКСТ (ОБЩЕНИЕ И РИСОВАНИЕ) ---
+    # ТЕКСТ / КОМАНДЫ
     text = msg.get("text", "").strip()
     if not text: return "OK", 200
 
     if text.lower() == "/start":
-        send_tg(chat_id, "🦾 <b>ОЛИМП: УЛЬТРА-РЕЖИМ</b>\nПрисылай фото заданий, проси написать код или просто болтай!")
-        return "OK", 200
-
-    if any(word in text.lower() for word in ["нарисуй", "картинка", "фото"]):
-        prompt = text.lower().replace("нарисуй", "").strip()
-        send_tg(chat_id, f"🎨 Рисую: {prompt}...", photo_url=f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?nologo=true")
+        send_tg(chat_id, "🦾 <b>ОЛИМП: УЛЬТРА-РЕЖИМ АКТИВИРОВАН</b>\nПрисылай фото заданий или просто пиши вопрос.")
+    elif any(word in text.lower() for word in ["нарисуй", "картинка"]):
+        p = text.lower().replace("нарисуй", "").strip()
+        send_tg(chat_id, f"🎨 Рисую: {p}", photo=f"https://image.pollinations.ai/prompt/{p}?nologo=true")
     else:
-        send_tg(chat_id, call_gemini_ultra(text))
+        send_tg(chat_id, ask_ai_unlimited(text))
     return "OK", 200
 
 if __name__ == "__main__":
