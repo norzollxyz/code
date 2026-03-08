@@ -10,7 +10,7 @@ from flask import Flask, request
 from github import Github, GithubException
 
 # ==============================================================================
-# ⚙️ КОНФИГУРАЦИЯ (С ТВОИМИ ДАННЫМИ)
+# ⚙️ КОНФИГУРАЦИЯ
 # ==============================================================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class Config:
     # GitHub настройки (ТВОИ ДАННЫЕ)
     GITHUB_TOKEN = "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"
     GITHUB_REPO = "norzollxyz/code"
-    GITHUB_LOGS_PATH = "logs/titan_logs.txt"  # Путь к файлу логов в репозитории
+    GITHUB_LOGS_PATH = "logs/titan_logs.txt"
 
 app = Flask(__name__)
 
@@ -43,18 +43,15 @@ BANNED_USERS = set()
 ADMIN_STATS = {
     'total_messages': 0,
     'total_images': 0,
-    'start_time': datetime.datetime.now(),
-    'commands_used': {}
+    'start_time': datetime.datetime.now()
 }
 
 db_lock = threading.Lock()
 
 # ==============================================================================
-# 📦 GITHUB СТОРАДЖ (СОХРАНЕНИЕ В РЕПОЗИТОРИЙ)
+# 📦 GITHUB СТОРАДЖ
 # ==============================================================================
 class GitHubStorage:
-    """Класс для работы с GitHub как с хранилищем"""
-    
     def __init__(self):
         self.token = Config.GITHUB_TOKEN
         self.repo_name = Config.GITHUB_REPO
@@ -62,11 +59,9 @@ class GitHubStorage:
         self.github = None
         self.repo = None
         self.authenticated = False
-        
         self.authenticate()
     
     def authenticate(self):
-        """Авторизация в GitHub"""
         try:
             if self.token and self.token != "ghp_твой_токен_сюда":
                 self.github = Github(self.token)
@@ -80,59 +75,42 @@ class GitHubStorage:
             self.authenticated = False
     
     def save_logs(self, log_entries):
-        """Сохранить логи в GitHub"""
         if not self.authenticated:
-            logger.warning("GitHub не авторизован, логи не сохранены")
             return False
-        
         try:
-            # Формируем текст логов
             log_text = "\n".join(log_entries)
             log_text = f"# TITAN LOGS - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n{log_text}"
-            
             try:
-                # Пытаемся получить существующий файл
                 contents = self.repo.get_contents(self.logs_path)
-                # Обновляем файл
                 self.repo.update_file(
                     path=self.logs_path,
                     message=f"Logs update {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                     content=log_text,
                     sha=contents.sha
                 )
-                logger.info(f"✅ Логи обновлены в GitHub: {self.logs_path}")
             except GithubException as e:
                 if e.status == 404:
-                    # Файл не существует - создаём новый
                     self.repo.create_file(
                         path=self.logs_path,
                         message=f"Logs created {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                         content=log_text
                     )
-                    logger.info(f"✅ Логи созданы в GitHub: {self.logs_path}")
                 else:
                     raise e
-            
             return True
         except Exception as e:
-            logger.error(f"❌ Ошибка сохранения логов в GitHub: {e}")
+            logger.error(f"❌ Ошибка сохранения логов: {e}")
             return False
     
     def get_logs(self):
-        """Получить логи из GitHub"""
         if not self.authenticated:
             return None, "❌ GitHub не настроен"
-        
         try:
             contents = self.repo.get_contents(self.logs_path)
-            # Декодируем из base64
             log_text = base64.b64decode(contents.content).decode('utf-8')
-            
-            # Сохраняем временный файл для отправки
             temp_path = "/tmp/titan_logs.txt"
             with open(temp_path, 'w', encoding='utf-8') as f:
                 f.write(log_text)
-            
             return temp_path, log_text
         except GithubException as e:
             if e.status == 404:
@@ -140,17 +118,13 @@ class GitHubStorage:
             else:
                 return None, f"❌ Ошибка: {e}"
         except Exception as e:
-            logger.error(f"❌ Ошибка получения логов: {e}")
             return None, f"❌ Ошибка: {e}"
     
     def clear_logs(self):
-        """Очистить логи (создать пустой файл)"""
         if not self.authenticated:
             return False
-        
         try:
             empty_log = f"# TITAN LOGS CLEARED - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            
             try:
                 contents = self.repo.get_contents(self.logs_path)
                 self.repo.update_file(
@@ -168,71 +142,53 @@ class GitHubStorage:
                     )
                 else:
                     raise e
-            
             return True
         except Exception as e:
             logger.error(f"❌ Ошибка очистки логов: {e}")
             return False
     
     def get_download_url(self):
-        """Получить прямую ссылку на скачивание файла"""
         if not self.authenticated:
             return None
-        
         try:
             contents = self.repo.get_contents(self.logs_path)
-            # GitHub API возвращает download_url
             return contents.download_url
         except:
             return None
 
-# Инициализируем GitHub Storage
 github_storage = GitHubStorage()
-
-# Логи в памяти (как буфер)
 SYSTEM_LOGS = []
 MAX_LOGS = 100
 LAST_SAVE_TIME = time.time()
-SAVE_INTERVAL = 300  # Сохранять в GitHub каждые 5 минут
+SAVE_INTERVAL = 300
 
 # ==============================================================================
-# 📝 СИСТЕМА ЛОГОВ (С СОХРАНЕНИЕМ В GITHUB)
+# 📝 СИСТЕМА ЛОГОВ
 # ==============================================================================
 def add_log(action, admin_id, target=None, details=""):
-    """Добавление записи в лог и сохранение в GitHub"""
     global SYSTEM_LOGS, LAST_SAVE_TIME
-    
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"[{timestamp}] Admin:{admin_id} | Action:{action} | Target:{target} | {details}"
-    
     with db_lock:
         SYSTEM_LOGS.append(log_entry)
         if len(SYSTEM_LOGS) > MAX_LOGS:
             SYSTEM_LOGS = SYSTEM_LOGS[-MAX_LOGS:]
-    
-    # Сохраняем в GitHub каждые SAVE_INTERVAL секунд
     current_time = time.time()
     if current_time - LAST_SAVE_TIME > SAVE_INTERVAL:
         save_logs_to_github()
         LAST_SAVE_TIME = current_time
 
 def save_logs_to_github():
-    """Сохранить текущие логи в GitHub"""
     if not github_storage.authenticated:
         return
-    
     with db_lock:
         logs_copy = SYSTEM_LOGS.copy()
-    
     if logs_copy:
         github_storage.save_logs(logs_copy)
-        logger.info(f"Логи автоматически сохранены в GitHub")
 
 def force_save_logs():
-    """Принудительно сохранить логи"""
     with db_lock:
         logs_copy = SYSTEM_LOGS.copy()
-    
     if logs_copy:
         return github_storage.save_logs(logs_copy)
     return False
@@ -275,7 +231,6 @@ def get_cancel_keyboard():
     return {"keyboard": keyboard, "resize_keyboard": True}
 
 def get_admin_main_keyboard():
-    """Главное админ-меню с GitHub кнопками"""
     keyboard = [
         ["📊 СТАТИСТИКА", "📢 РАССЫЛКА", "👥 ВСЕ ЮЗЕРЫ"],
         ["👑 АДМИНЫ", "🚫 БАН-ЛИСТ", "📝 ЛОГИ"],
@@ -315,7 +270,6 @@ def fast_ai_response(prompt):
         "Authorization": f"Bearer {Config.GROQ_KEY}",
         "Content-Type": "application/json"
     }
-    
     payload = {
         "model": "llama-3.1-8b-instant",
         "messages": [
@@ -325,7 +279,6 @@ def fast_ai_response(prompt):
         "temperature": 0.7,
         "max_tokens": 200
     }
-    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         response.raise_for_status()
@@ -368,7 +321,6 @@ def send_photo(chat_id, photo_url, caption=""):
         return None
 
 def send_document(chat_id, file_path, caption=""):
-    """Отправка файла (для логов)"""
     url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendDocument"
     try:
         with open(file_path, 'rb') as f:
@@ -419,16 +371,13 @@ def fast_animate(chat_id, text, settings):
             if len(words) <= 3:
                 send_msg(chat_id, text)
                 return
-            
             msg = send_msg(chat_id, "⏳")
             if not msg:
                 send_msg(chat_id, text)
                 return
-            
             msg_id = msg.json()['result']['message_id']
             current = ""
             delay = settings.get('speed', 0.03)
-            
             for word in words:
                 current += word + " "
                 edit_msg(chat_id, msg_id, current.strip())
@@ -437,16 +386,13 @@ def fast_animate(chat_id, text, settings):
             if len(text) < 20:
                 send_msg(chat_id, text)
                 return
-            
             msg = send_msg(chat_id, "⏳")
             if not msg:
                 send_msg(chat_id, text)
                 return
-            
             msg_id = msg.json()['result']['message_id']
             current = ""
             delay = settings.get('speed', 0.01)
-            
             for char in text:
                 current += char
                 if len(current) % 5 == 0:
@@ -466,7 +412,6 @@ def webhook():
         return '', 200
     if request.method == 'GET':
         return "TITAN ACTIVE", 200
-
     if request.method == 'POST':
         update = request.get_json(silent=True)
         if update and "message" in update:
@@ -488,21 +433,13 @@ def process_message(update):
         with db_lock:
             if cid not in USERS_DB:
                 USERS_DB.add(cid)
-            
             if cid not in USER_SETTINGS:
-                USER_SETTINGS[cid] = {
-                    'speed': 0.03,
-                    'mode': 'words'
-                }
-            
+                USER_SETTINGS[cid] = {'speed': 0.03, 'mode': 'words'}
             if cid not in USER_TIMEOUTS:
                 USER_TIMEOUTS[cid] = 60
         
         is_admin = cid in ADMINS_DB
         
-        # ==========================================================
-        # ❌ ОТМЕНА
-        # ==========================================================
         if text == "❌ Отмена":
             with db_lock:
                 if cid in USER_STATES:
@@ -510,16 +447,11 @@ def process_message(update):
             send_msg(cid, "❌ Действие отменено", get_main_keyboard())
             return
         
-        # ==========================================================
-        # 👤 /profile
-        # ==========================================================
         if text == "/profile" or text == "👤 Личный кабинет":
             role = "👑 Админ" if is_admin else "👤 Пользователь"
             settings = USER_SETTINGS.get(cid, {})
             timeout = USER_TIMEOUTS.get(cid, 60)
-            
             speed_text = "Быстро" if settings.get('speed') == 0.02 else "Средне" if settings.get('speed') == 0.03 else "Медленно"
-            
             profile = f"""
 <b>👤 ПРОФИЛЬ</b>
 ────────────────
@@ -530,28 +462,21 @@ def process_message(update):
 📝 Режим: {'Словами' if settings.get('mode') == 'words' else 'Буквами'}
 ⏱️ Таймаут: {timeout} сек
 ────────────────"""
-            
             if is_admin:
                 profile += f"\n👥 Админов: {len(ADMINS_DB)}"
                 if github_storage.authenticated:
                     profile += f"\n🌐 GitHub: ✅"
                 else:
                     profile += f"\n🌐 GitHub: ❌"
-            
             send_msg(cid, profile, get_profile_keyboard() if not is_admin else get_admin_main_keyboard())
             return
         
-        # ==========================================================
-        # 👑 /adminprofile
-        # ==========================================================
         if is_admin and (text == "/adminprofile" or text == "👑 АДМИНЫ"):
             admins_list = []
             for admin_id in ADMINS_DB:
                 role = "👑 ГЛАВНЫЙ" if admin_id == Config.MAIN_ADMIN_ID else "👤 АДМИН"
                 admins_list.append(f"{role}: <code>{admin_id}</code>")
-            
             admins_text = "\n".join(admins_list)
-            
             profile = f"""
 <b>👑 АДМИН ПАНЕЛЬ</b>
 ────────────────
@@ -560,21 +485,15 @@ def process_message(update):
 ────────────────
 {admins_text}
 ────────────────
-📊 Команд: {ADMIN_STATS['commands_used']}
 👥 Юзеров: {len(USERS_DB)}
 🚫 Забанено: {len(BANNED_USERS)}
 ────────────────
 🌐 GitHub: {'✅ Подключен' if github_storage.authenticated else '❌ Не настроен'}"""
-            
             send_msg(cid, profile, get_admin_main_keyboard())
             return
         
-        # ==========================================================
-        # /start
-        # ==========================================================
         if text == "/start":
             welcome = f"⚡ <b>TITAN {Config.VERSION}</b>\n\nПривет, {user_name}! Я здесь чтобы помочь."
-            
             if is_admin:
                 welcome += "\n\n👑 У тебя есть права администратора!"
                 if not github_storage.authenticated:
@@ -584,86 +503,59 @@ def process_message(update):
                 send_msg(cid, welcome, get_main_keyboard())
             return
         
-        # ==========================================================
-        # ❓ ПОМОЩЬ
-        # ==========================================================
         if text == "❓ Помощь":
             help_text = """
 <b>❓ ПОМОЩЬ</b>
-
 💬 <b>Связаться с ИИ</b> - задай любой вопрос
 🎨 <b>Сгенерировать</b> - создай изображение
 📢 <b>Связь с админом</b> - написать админу
 ⚙️ <b>Настройки</b> - скорость печати
-
 📝 <b>Команды:</b>
 /profile - твой профиль
-
 ⚡ <b>Версия:</b> TITAN V26.1 GITHUB"""
-            
             kb = get_admin_main_keyboard() if is_admin else get_help_keyboard()
             send_msg(cid, help_text, kb)
             return
         
-        # ==========================================================
-        # 📢 СВЯЗЬ С АДМИНОМ
-        # ==========================================================
         if text == "📢 Связь с админом":
             last_time = USER_LAST_MSG.get(cid, 0)
             current_time = time.time()
             timeout = USER_TIMEOUTS.get(cid, 60)
-            
             if current_time - last_time < timeout:
                 wait = int(timeout - (current_time - last_time))
                 send_msg(cid, f"⏳ Подожди {wait} сек.", get_cancel_keyboard())
                 return
-            
             with db_lock:
                 USER_STATES[cid] = 'msg_admin'
             send_msg(cid, "📝 Напиши сообщение для админа:", get_cancel_keyboard())
             return
         
-        # ==========================================================
-        # ОБРАБОТКА СООБЩЕНИЯ ДЛЯ АДМИНА
-        # ==========================================================
         with db_lock:
             state = USER_STATES.get(cid)
         
         if state == 'msg_admin' and text and text != "❌ Отмена":
             USER_LAST_MSG[cid] = time.time()
-            
             for admin_id in ADMINS_DB:
                 header = f"📨 <b>Сообщение от пользователя</b>\n👤 {user_name}\n🆔 <code>{cid}</code>\n⏱️ Таймаут: {USER_TIMEOUTS.get(cid, 60)}сек\n\n"
                 send_msg(admin_id, header + text)
-            
             send_msg(cid, "✅ Отправлено!", get_main_keyboard())
             with db_lock:
                 USER_STATES.pop(cid, None)
-            
             add_log("user_message", cid, details=f"To admin: {text[:50]}")
             return
         
-        # ==========================================================
-        # 💬 СВЯЗАТЬСЯ С ИИ
-        # ==========================================================
         if text == "💬 Связаться с ИИ":
             send_msg(cid, "🧠 Напиши свой вопрос:", get_cancel_keyboard())
             with db_lock:
                 USER_STATES[cid] = 'ai_chat'
             return
         
-        # ==========================================================
-        # 🎨 СГЕНЕРИРОВАТЬ
-        # ==========================================================
         if text == "🎨 Сгенерировать":
             send_msg(cid, "🖼 Что нарисовать? Напиши описание:", get_cancel_keyboard())
             with db_lock:
                 USER_STATES[cid] = 'generate'
             return
         
-        # ==========================================================
-        # ⚙️ НАСТРОЙКИ
-        # ==========================================================
         if text == "⚙️ Настройки":
             send_msg(cid, "⚙️ <b>Настройки печати:</b>", get_settings_keyboard())
             return
@@ -687,11 +579,7 @@ def process_message(update):
             send_msg(cid, "✅ Настройки сохранены!", kb)
             return
         
-        # ==========================================================
-        # 👑 АДМИН ПАНЕЛЬ
-        # ==========================================================
         if is_admin:
-            
             if text == "📊 СТАТИСТИКА":
                 uptime = datetime.datetime.now() - ADMIN_STATS['start_time']
                 stats = f"""
@@ -716,10 +604,8 @@ def process_message(update):
                     is_ban = "🚫" if uid in BANNED_USERS else "✅"
                     is_admin_flag = "👑" if uid in ADMINS_DB else ""
                     users_list.append(f"{is_ban}{is_admin_flag} <code>{uid}</code>")
-                
                 if len(USERS_DB) > 30:
                     users_list.append(f"... и еще {len(USERS_DB)-30}")
-                
                 text = f"<b>👥 Всего {len(USERS_DB)}:</b>\n" + "\n".join(users_list)
                 send_msg(cid, text, get_admin_main_keyboard())
                 return
@@ -732,9 +618,6 @@ def process_message(update):
                     send_msg(cid, f"<b>🚫 Забанены ({len(BANNED_USERS)}):</b>\n{banned}", get_admin_main_keyboard())
                 return
             
-            # ==========================================================
-            # 📝 ЛОГИ (С GITHUB)
-            # ==========================================================
             if text == "📝 ЛОГИ":
                 if not SYSTEM_LOGS:
                     send_msg(cid, "📝 Логи в памяти пусты", get_admin_main_keyboard())
@@ -743,44 +626,28 @@ def process_message(update):
                     send_msg(cid, f"<b>📝 Последние логи (в памяти):</b>\n<pre>{logs_text}</pre>", get_admin_main_keyboard())
                 return
             
-            # ==========================================================
-            # ⬇️ СКАЧАТЬ ЛОГИ (ИЗ GITHUB)
-            # ==========================================================
             if text == "⬇️ СКАЧАТЬ ЛОГИ":
                 status_msg = send_msg(cid, "🔄 Загружаю логи из GitHub...")
-                
                 file_path, content = github_storage.get_logs()
-                
                 if file_path and os.path.exists(file_path):
-                    # Отправляем файл
                     send_document(cid, file_path, f"📝 Логи TITAN {datetime.datetime.now().strftime('%Y-%m-%d')}")
-                    
-                    # Также показываем прямую ссылку
                     download_url = github_storage.get_download_url()
                     if download_url:
                         send_msg(cid, f"🔗 <b>Прямая ссылка:</b>\n{download_url}")
-                    
-                    # Удаляем временный файл
                     try:
                         os.remove(file_path)
                     except:
                         pass
-                    
                     add_log("logs_downloaded", cid)
                 else:
                     send_msg(cid, content, get_admin_main_keyboard())
-                
                 if status_msg:
                     delete_msg(cid, status_msg.json()['result']['message_id'])
                 return
             
-            # ==========================================================
-            # 🧹 ОЧИСТИТЬ ЛОГИ (В GITHUB)
-            # ==========================================================
             if text == "🧹 ОЧИСТИТЬ ЛОГИ":
                 with db_lock:
                     SYSTEM_LOGS.clear()
-                
                 if github_storage.authenticated:
                     result = github_storage.clear_logs()
                     if result:
@@ -789,36 +656,24 @@ def process_message(update):
                         send_msg(cid, "⚠️ Логи в памяти очищены, но GitHub ошибка", get_admin_main_keyboard())
                 else:
                     send_msg(cid, "✅ Логи в памяти очищены", get_admin_main_keyboard())
-                
                 add_log("logs_cleared", cid)
                 return
             
-            # ==========================================================
-            # 💾 СОХРАНИТЬ В GITHUB
-            # ==========================================================
             if text == "💾 СОХРАНИТЬ В GITHUB":
                 if not github_storage.authenticated:
                     send_msg(cid, "❌ GitHub не настроен", get_admin_main_keyboard())
                     return
-                
                 status_msg = send_msg(cid, "🔄 Сохраняю логи в GitHub...")
-                
                 result = force_save_logs()
-                
                 if status_msg:
                     delete_msg(cid, status_msg.json()['result']['message_id'])
-                
                 if result:
                     send_msg(cid, f"✅ Логи сохранены в GitHub!\n📁 {Config.GITHUB_LOGS_PATH}", get_admin_main_keyboard())
                 else:
                     send_msg(cid, "❌ Ошибка сохранения в GitHub", get_admin_main_keyboard())
-                
                 add_log("logs_saved_github", cid)
                 return
             
-            # ==========================================================
-            # 🌐 GitHub СТАТУС
-            # ==========================================================
             if text == "🌐 GitHub СТАТУС":
                 if github_storage.authenticated:
                     repo = github_storage.repo
@@ -839,14 +694,7 @@ def process_message(update):
 ❌ Авторизация: Не настроена
 📁 Репозиторий: {Config.GITHUB_REPO}
 📝 Файл логов: {Config.GITHUB_LOGS_PATH}
-────────────────
-⚠️ <b>Как настроить:</b>
-1. Создать токен на github.com/settings/tokens
-2. Добавить права 'repo'
-3. Вставить токен в Config.GITHUB_TOKEN
-4. Указать repo: "юзернейм/репозиторий"
 ────────────────"""
-                
                 send_msg(cid, status, get_admin_main_keyboard())
                 return
             
@@ -934,12 +782,6 @@ def process_message(update):
                 send_msg(cid, "✅ Статистика сброшена", get_manage_keyboard())
                 add_log("stats_reset", cid)
                 return
-        
-
-        # ==========================================================
-        # ОБРАБОТКА АДМИНСКИХ СОСТОЯНИЙ
-        # ==========================================================
-        if is_admin:
             
             if state == 'add_admin' and text and text != "❌ Отмена":
                 try:
@@ -954,7 +796,6 @@ def process_message(update):
                         add_log("admin_added", cid, new_admin)
                 except:
                     send_msg(cid, "❌ Неверный ID", get_admin_main_keyboard())
-                
                 with db_lock:
                     USER_STATES.pop(cid, None)
                 return
@@ -974,7 +815,6 @@ def process_message(update):
                         send_msg(cid, "❌ Этот пользователь не админ", get_admin_main_keyboard())
                 except:
                     send_msg(cid, "❌ Неверный ID", get_admin_main_keyboard())
-                
                 with db_lock:
                     USER_STATES.pop(cid, None)
                 return
@@ -991,7 +831,6 @@ def process_message(update):
                         add_log("user_banned", cid, ban_id)
                 except:
                     send_msg(cid, "❌ Неверный ID", get_admin_main_keyboard())
-                
                 with db_lock:
                     USER_STATES.pop(cid, None)
                 return
@@ -1008,7 +847,6 @@ def process_message(update):
                         send_msg(cid, "❌ Этот пользователь не в бане", get_admin_main_keyboard())
                 except:
                     send_msg(cid, "❌ Неверный ID", get_admin_main_keyboard())
-                
                 with db_lock:
                     USER_STATES.pop(cid, None)
                 return
@@ -1019,187 +857,4 @@ def process_message(update):
                     if len(parts) == 2:
                         target_id = int(parts[0])
                         reply_text = parts[1]
-                        
-                        result = send_msg(target_id, f"📢 <b>Ответ от админа:</b>\n\n{reply_text}")
-                        
-                        if result and result.status_code == 200:
-                            send_msg(cid, f"✅ Ответ отправлен пользователю {target_id}", get_admin_main_keyboard())
-                            add_log("admin_replied", cid, target_id, reply_text[:50])
-                        else:
-                            send_msg(cid, f"❌ Не удалось отправить пользователю {target_id}", get_admin_main_keyboard())
-                    else:
-                        send_msg(cid, "❌ Формат: ID сообщение", get_admin_main_keyboard())
-                except:
-                    send_msg(cid, "❌ Ошибка. Формат: 123456789 Привет", get_admin_main_keyboard())
-                
-                with db_lock:
-                    USER_STATES.pop(cid, None)
-                return
-            
-            if state == 'waiting_timeout_user' and text and text != "❌ Отмена":
-                if text in ["⏱️ 30 сек", "⏱️ 60 сек", "⏱️ 120 сек", "⏱️ 5 мин", "⏱️ 10 мин", "⏱️ 30 мин", "⏱️ 1 час", "⏱️ 3 часа", "⏱️ 12 часов", "⏱️ 24 часа", "⏱️ Без лимита"]:
-                    timeouts = {
-                        "⏱️ 30 сек": 30, "⏱️ 60 сек": 60, "⏱️ 120 сек": 120,
-                        "⏱️ 5 мин": 300, "⏱️ 10 мин": 600, "⏱️ 30 мин": 1800,
-                        "⏱️ 1 час": 3600, "⏱️ 3 часа": 10800, "⏱️ 12 часов": 43200,
-                        "⏱️ 24 часа": 86400, "⏱️ Без лимита": 0
-                    }
-                    
-                    timeout_value = timeouts[text]
-                    
-                    with db_lock:
-                        for uid in USERS_DB:
-                            USER_TIMEOUTS[uid] = timeout_value
-                    
-                    send_msg(cid, f"✅ Таймаут для всех пользователей установлен: {text}", get_admin_main_keyboard())
-                    add_log("timeout_all_set", cid, details=text)
-                    
-                    with db_lock:
-                        USER_STATES.pop(cid, None)
-                    return
-                else:
-                    try:
-                        target_id = int(text)
-                        send_msg(cid, f"⏱️ Выбери время для пользователя <code>{target_id}</code>:", get_timeout_keyboard())
-                        with db_lock:
-                            USER_STATES[cid] = f'set_timeout_{target_id}'
-                    except:
-                        send_msg(cid, "❌ Неверный ID. Отправь ID пользователя:", get_timeout_keyboard())
-                return
-            
-            if state and state.startswith('set_timeout_') and text and text != "❌ Отмена":
-                target_id = int(state.replace('set_timeout_', ''))
-                
-                timeouts = {
-                    "⏱️ 30 сек": 30, "⏱️ 60 сек": 60, "⏱️ 120 сек": 120,
-                    "⏱️ 5 мин": 300, "⏱️ 10 мин": 600, "⏱️ 30 мин": 1800,
-                    "⏱️ 1 час": 3600, "⏱️ 3 часа": 10800, "⏱️ 12 часов": 43200,
-                    "⏱️ 24 часа": 86400, "⏱️ Без лимита": 0
-                }
-                
-                if text in timeouts:
-                    timeout_value = timeouts[text]
-                    
-                    with db_lock:
-                        USER_TIMEOUTS[target_id] = timeout_value
-                    
-                    send_msg(cid, f"✅ Таймаут для пользователя <code>{target_id}</code> установлен: {text}", get_admin_main_keyboard())
-                    add_log("timeout_user_set", cid, target_id, text)
-                    
-                    with db_lock:
-                        USER_STATES.pop(cid, None)
-                return
-            
-            if state == 'broadcast' and text and text != "❌ Отмена":
-                with db_lock:
-                    USER_STATES.pop(cid, None)
-                
-                success = 0
-                users_copy = list(USERS_DB)
-                status_msg = send_msg(cid, f"📢 Рассылка: 0/{len(users_copy)}")
-                
-                for i, uid in enumerate(users_copy):
-                    if uid not in BANNED_USERS and uid != cid:
-                        if copy_msg(uid, cid, msg["message_id"]):
-                            success += 1
-                    if i % 10 == 0 and status_msg:
-                        edit_msg(cid, status_msg.json()['result']['message_id'], f"📢 Рассылка: {i+1}/{len(users_copy)}")
-                    time.sleep(0.05)
-                
-                send_msg(cid, f"✅ Рассылка завершена!\nДоставлено: {success}/{len(users_copy)}", get_admin_main_keyboard())
-                add_log("broadcast", cid, details=f"Sent to {success}/{len(users_copy)}")
-                return
-        
-        # ==========================================================
-        # AI ЧАТ
-        # ==========================================================
-        if state == 'ai_chat' and text and text != "❌ Отмена":
-            send_typing(cid)
-            
-            progress = send_msg(cid, "🔄 0%")
-            if progress:
-                msg_id = progress.json()['result']['message_id']
-                time.sleep(0.1)
-                edit_msg(cid, msg_id, "🔄 50%")
-                time.sleep(0.1)
-                delete_msg(cid, msg_id)
-            
-            response = fast_ai_response(text)
-            settings = USER_SETTINGS.get(cid, {'speed': 0.03, 'mode': 'words'})
-            fast_animate(cid, response, settings)
-            
-            ADMIN_STATS['total_messages'] += 1
-            with db_lock:
-                USER_STATES.pop(cid, None)
-            return
-        
-        # ==========================================================
-        # ГЕНЕРАЦИЯ
-        # ==========================================================
-        if state == 'generate' and text and text != "❌ Отмена":
-            send_typing(cid)
-            
-            progress = send_msg(cid, "🎨 0%")
-            if progress:
-                msg_id = progress.json()['result']['message_id']
-                time.sleep(0.2)
-                edit_msg(cid, msg_id, "🎨 50%")
-                time.sleep(0.2)
-                delete_msg(cid, msg_id)
-            
-            img_url = generate_image(text)
-            
-            if img_url:
-                send_photo(cid, img_url, f"🖼 <b>{text}</b>")
-                ADMIN_STATS['total_images'] += 1
-            else:
-                kb = get_admin_main_keyboard() if is_admin else get_main_keyboard()
-                send_msg(cid, "❌ Ошибка генерации", kb)
-            
-            with db_lock:
-                USER_STATES.pop(cid, None)
-            return
-        
-        # ==========================================================
-        # ЛЮБОЙ ТЕКСТ
-        # ==========================================================
-        if text and not text.startswith("/") and text != "❌ Отмена":
-            send_typing(cid)
-            
-            progress = send_msg(cid, "🔄 0%")
-            if progress:
-                msg_id = progress.json()['result']['message_id']
-                time.sleep(0.1)
-                edit_msg(cid, msg_id, "🔄 50%")
-                time.sleep(0.1)
-                delete_msg(cid, msg_id)
-            
-            response = fast_ai_response(text)
-            settings = USER_SETTINGS.get(cid, {'speed': 0.03, 'mode': 'words'})
-            fast_animate(cid, response, settings)
-            
-            ADMIN_STATS['total_messages'] += 1
-    
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        try:
-            kb = get_admin_main_keyboard() if cid in ADMINS_DB else get_main_keyboard()
-            send_msg(cid, "⚠️ Ошибка", kb)
-        except:
-            pass
-
-# ==============================================================================
-# 🚀 ЗАПУСК
-# ==============================================================================
-if __name__ == "__main__":
-    logger.info(f"TITAN {Config.VERSION} starting on port {Config.PORT}")
-    logger.info(f"Main Admin ID: {Config.MAIN_ADMIN_ID}")
-    
-    if github_storage.authenticated:
-        logger.info(f"✅ GitHub connected: {Config.GITHUB_REPO}")
-        # Сохраняем логи при запуске
-        save_logs_to_github()
-    else:
-        logger.warning("⚠️ GitHub not configured. Logs will not be saved.")
-    
-    app.run(host='0.0.0.0', port=Config.PORT, threaded=True)
+                        result =
