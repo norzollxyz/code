@@ -2,19 +2,19 @@ import os, requests, json
 from flask import Flask, request
 
 # ==============================================================================
-# ⚙️ КОНФИГУРАЦИЯ (GROQ-STABLE)
+# ⚙️ КОНФИГУРАЦИЯ (GROQ-FINAL)
 # ==============================================================================
 class Config:
-    VERSION = "V26.0 GROQ-SPEED"
+    VERSION = "V26.0 OMEGA-FLOW"
     BOT_TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
-    # Твой ключ Groq:
-    GROQ_KEY = "Gsk_ai97zf6OjIMxe3ig2U9kWGdyb3FYPjvSGDMeq641ibpXfPKZLk6l"
+    # Твой новый ключ Groq (принудительно в нижнем регистре для стабильности)
+    GROQ_KEY = "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"
     PORT = int(os.environ.get("PORT", 10000))
 
 app = Flask(__name__)
 
 # ==============================================================================
-# 🧠 МОЗГ (GROQ / LLAMA 3.1 8B)
+# 🧠 МОЗГ (GROQ / LLAMA 3.1)
 # ==============================================================================
 def get_ai_response(prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -23,12 +23,11 @@ def get_ai_response(prompt):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "llama-3.1-8b-instant", # Самая быстрая модель на текущий момент
+        "model": "llama-3.1-8b-instant",
         "messages": [
-            {"role": "system", "content": "Ты — TITAN V26, мощный ИИ. Твои ответы четкие, быстрые и дерзкие. Помогай юзеру во всем."},
+            {"role": "system", "content": "Ты — TITAN V26. Отвечай кратко, четко, без лишней воды. Тон уверенный и техничный."},
             {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7
+        ]
     }
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=20)
@@ -36,12 +35,13 @@ def get_ai_response(prompt):
         if 'choices' in res:
             return res['choices'][0]['message']['content']
         else:
-            return f"⚠️ Ошибка Groq: {res.get('error', {}).get('message', 'Неизвестная ошибка')}"
+            err = res.get('error', {}).get('message', 'Неизвестная ошибка')
+            return f"⚠️ Ошибка API: {err}\n\nПроверь ключ тут: https://console.groq.com/keys"
     except Exception as e:
         return f"❌ Ошибка сети: {str(e)}"
 
 # ==============================================================================
-# 🕹 МЕНЮ И КНОПКИ
+# 🕹 МЕНЮ
 # ==============================================================================
 def send_main_menu(chat_id, text="🌌 TITAN SYSTEM ONLINE"):
     url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage"
@@ -52,21 +52,16 @@ def send_main_menu(chat_id, text="🌌 TITAN SYSTEM ONLINE"):
         ],
         "resize_keyboard": True
     }
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "reply_markup": reply_markup
-    }
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "reply_markup": reply_markup}
     requests.post(url, json=payload)
 
 # ==============================================================================
-# 📡 ГЛАВНЫЙ ОБРАБОТЧИК
+# 📡 ГЛАВНЫЙ ШЛЮЗ
 # ==============================================================================
 @app.route('/', methods=['POST', 'GET'])
 def index():
     if request.method == 'GET':
-        return f"TITAN {Config.VERSION} IS ALIVE", 200
+        return f"TITAN {Config.VERSION} ACTIVE", 200
     
     data = request.get_json()
     if not data or "message" not in data:
@@ -77,21 +72,18 @@ def index():
     txt = m.get("text", "")
 
     if txt == "/start":
-        send_main_menu(cid, "🌌 <b>TITAN V26.0: GROQ EDITION</b>\n\nГемини отправлен на свалку. Теперь работаем на Llama 3. Жду команд, босс.")
+        send_main_menu(cid, "🌌 <b>TITAN V26.0: GROQ OMEGA</b>\n\nСвязь установлена. Система готова к работе.")
     
     elif txt == "🛰 Статус":
-        msg = f"🟢 <b>Статус:</b> Online\n🛠 <b>Версия:</b> {Config.VERSION}\n⚡️ <b>Ядро:</b> Llama-3.1-8B-Instant"
+        msg = f"🟢 <b>Статус:</b> ONLINE\n🛠 <b>Версия:</b> {Config.VERSION}\n⚡️ <b>Процессор:</b> Llama-3.1-8B-Instant"
         requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage", json={"chat_id": cid, "text": msg, "parse_mode": "HTML"})
     
     elif txt == "ℹ️ Инфо":
-        msg = "TITAN V26.0 — Перезагрузка. Прямое подключение к мощностям Groq Cloud."
+        msg = "TITAN V26.0 — Высокоскоростной терминал на базе Groq Cloud. Скорость ответа < 0.5 сек."
         requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage", json={"chat_id": cid, "text": msg})
 
-    elif txt == "🤖 Спросить ИИ":
-        requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage", json={"chat_id": cid, "text": "Я слушаю. Что хочешь узнать?"})
-
     else:
-        # Эффект "печатает"
+        # Индикация "печатает"
         requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendChatAction", json={"chat_id": cid, "action": "typing"})
         ai_res = get_ai_response(txt)
         requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage", json={"chat_id": cid, "text": ai_res})
