@@ -560,4 +560,646 @@ def process_message(update):
 ────────────────
 {admins_text}
 ────────────────
-📊 Команд: {ADMIN
+📊 Команд: {ADMIN_STATS['commands_used']}
+👥 Юзеров: {len(USERS_DB)}
+🚫 Забанено: {len(BANNED_USERS)}
+────────────────
+🌐 GitHub: {'✅ Подключен' if github_storage.authenticated else '❌ Не настроен'}"""
+            
+            send_msg(cid, profile, get_admin_main_keyboard())
+            return
+        
+        # ==========================================================
+        # /start
+        # ==========================================================
+        if text == "/start":
+            welcome = f"⚡ <b>TITAN {Config.VERSION}</b>\n\nПривет, {user_name}! Я здесь чтобы помочь."
+            
+            if is_admin:
+                welcome += "\n\n👑 У тебя есть права администратора!"
+                if not github_storage.authenticated:
+                    welcome += "\n\n⚠️ GitHub не настроен! Логи не будут сохраняться."
+                send_msg(cid, welcome, get_admin_main_keyboard())
+            else:
+                send_msg(cid, welcome, get_main_keyboard())
+            return
+        
+        # ==========================================================
+        # ❓ ПОМОЩЬ
+        # ==========================================================
+        if text == "❓ Помощь":
+            help_text = """
+<b>❓ ПОМОЩЬ</b>
+
+💬 <b>Связаться с ИИ</b> - задай любой вопрос
+🎨 <b>Сгенерировать</b> - создай изображение
+📢 <b>Связь с админом</b> - написать админу
+⚙️ <b>Настройки</b> - скорость печати
+
+📝 <b>Команды:</b>
+/profile - твой профиль
+
+⚡ <b>Версия:</b> TITAN V26.1 GITHUB"""
+            
+            kb = get_admin_main_keyboard() if is_admin else get_help_keyboard()
+            send_msg(cid, help_text, kb)
+            return
+        
+        # ==========================================================
+        # 📢 СВЯЗЬ С АДМИНОМ
+        # ==========================================================
+        if text == "📢 Связь с админом":
+            last_time = USER_LAST_MSG.get(cid, 0)
+            current_time = time.time()
+            timeout = USER_TIMEOUTS.get(cid, 60)
+            
+            if current_time - last_time < timeout:
+                wait = int(timeout - (current_time - last_time))
+                send_msg(cid, f"⏳ Подожди {wait} сек.", get_cancel_keyboard())
+                return
+            
+            with db_lock:
+                USER_STATES[cid] = 'msg_admin'
+            send_msg(cid, "📝 Напиши сообщение для админа:", get_cancel_keyboard())
+            return
+        
+        # ==========================================================
+        # ОБРАБОТКА СООБЩЕНИЯ ДЛЯ АДМИНА
+        # ==========================================================
+        with db_lock:
+            state = USER_STATES.get(cid)
+        
+        if state == 'msg_admin' and text and text != "❌ Отмена":
+            USER_LAST_MSG[cid] = time.time()
+            
+            for admin_id in ADMINS_DB:
+                header = f"📨 <b>Сообщение от пользователя</b>\n👤 {user_name}\n🆔 <code>{cid}</code>\n⏱️ Таймаут: {USER_TIMEOUTS.get(cid, 60)}сек\n\n"
+                send_msg(admin_id, header + text)
+            
+            send_msg(cid, "✅ Отправлено!", get_main_keyboard())
+            with db_lock:
+                USER_STATES.pop(cid, None)
+            
+            add_log("user_message", cid, details=f"To admin: {text[:50]}")
+            return
+        
+        # ==========================================================
+        # 💬 СВЯЗАТЬСЯ С ИИ
+        # ==========================================================
+        if text == "💬 Связаться с ИИ":
+            send_msg(cid, "🧠 Напиши свой вопрос:", get_cancel_keyboard())
+            with db_lock:
+                USER_STATES[cid] = 'ai_chat'
+            return
+        
+        # ==========================================================
+        # 🎨 СГЕНЕРИРОВАТЬ
+        # ==========================================================
+        if text == "🎨 Сгенерировать":
+            send_msg(cid, "🖼 Что нарисовать? Напиши описание:", get_cancel_keyboard())
+            with db_lock:
+                USER_STATES[cid] = 'generate'
+            return
+        
+        # ==========================================================
+        # ⚙️ НАСТРОЙКИ
+        # ==========================================================
+        if text == "⚙️ Настройки":
+            send_msg(cid, "⚙️ <b>Настройки печати:</b>", get_settings_keyboard())
+            return
+        
+        if text in ["🐢 Медленно", "⚡ Средне", "🐇 Быстро"]:
+            speeds = {"🐢 Медленно": 0.05, "⚡ Средне": 0.03, "🐇 Быстро": 0.02}
+            with db_lock:
+                USER_SETTINGS[cid]['speed'] = speeds[text]
+            send_msg(cid, f"✅ Скорость: {text}", get_settings_keyboard())
+            return
+        
+        if text in ["📝 Словами", "🔤 Буквами"]:
+            modes = {"📝 Словами": "words", "🔤 Буквами": "letters"}
+            with db_lock:
+                USER_SETTINGS[cid]['mode'] = modes[text]
+            send_msg(cid, f"✅ Режим: {text}", get_settings_keyboard())
+            return
+        
+        if text == "💾 Сохранить":
+            kb = get_profile_keyboard() if not is_admin else get_admin_main_keyboard()
+            send_msg(cid, "✅ Настройки сохранены!", kb)
+            return
+        
+        # ==========================================================
+        # 👑 АДМИН ПАНЕЛЬ
+        # ==========================================================
+        if is_admin:
+            
+            if text == "📊 СТАТИСТИКА":
+                uptime = datetime.datetime.now() - ADMIN_STATS['start_time']
+                stats = f"""
+<b>📊 СТАТИСТИКА</b>
+────────────────
+👥 Юзеров: {len(USERS_DB)}
+👑 Админов: {len(ADMINS_DB)}
+📨 Сообщений: {ADMIN_STATS['total_messages']}
+🖼 Картинок: {ADMIN_STATS['total_images']}
+⏱ Аптайм: {str(uptime).split('.')[0]}
+🚫 Забанено: {len(BANNED_USERS)}
+────────────────
+🌐 GitHub: {'✅ Активен' if github_storage.authenticated else '❌ Не настроен'}
+📝 Логов в буфере: {len(SYSTEM_LOGS)}"""
+                send_msg(cid, stats, get_admin_main_keyboard())
+                add_log("stats_view", cid)
+                return
+            
+            if text == "👥 ВСЕ ЮЗЕРЫ":
+                users_list = []
+                for i, uid in enumerate(list(USERS_DB)[:30]):
+                    is_ban = "🚫" if uid in BANNED_USERS else "✅"
+                    is_admin_flag = "👑" if uid in ADMINS_DB else ""
+                    users_list.append(f"{is_ban}{is_admin_flag} <code>{uid}</code>")
+                
+                if len(USERS_DB) > 30:
+                    users_list.append(f"... и еще {len(USERS_DB)-30}")
+                
+                text = f"<b>👥 Всего {len(USERS_DB)}:</b>\n" + "\n".join(users_list)
+                send_msg(cid, text, get_admin_main_keyboard())
+                return
+            
+            if text == "🚫 БАН-ЛИСТ":
+                if not BANNED_USERS:
+                    send_msg(cid, "🚫 Бан-лист пуст", get_admin_main_keyboard())
+                else:
+                    banned = "\n".join([f"<code>{uid}</code>" for uid in BANNED_USERS])
+                    send_msg(cid, f"<b>🚫 Забанены ({len(BANNED_USERS)}):</b>\n{banned}", get_admin_main_keyboard())
+                return
+            
+            # ==========================================================
+            # 📝 ЛОГИ (С GITHUB)
+            # ==========================================================
+            if text == "📝 ЛОГИ":
+                if not SYSTEM_LOGS:
+                    send_msg(cid, "📝 Логи в памяти пусты", get_admin_main_keyboard())
+                else:
+                    logs_text = "\n".join(SYSTEM_LOGS[-20:])
+                    send_msg(cid, f"<b>📝 Последние логи (в памяти):</b>\n<pre>{logs_text}</pre>", get_admin_main_keyboard())
+                return
+            
+            # ==========================================================
+            # ⬇️ СКАЧАТЬ ЛОГИ (ИЗ GITHUB)
+            # ==========================================================
+            if text == "⬇️ СКАЧАТЬ ЛОГИ":
+                status_msg = send_msg(cid, "🔄 Загружаю логи из GitHub...")
+                
+                file_path, content = github_storage.get_logs()
+                
+                if file_path and os.path.exists(file_path):
+                    # Отправляем файл
+                    send_document(cid, file_path, f"📝 Логи TITAN {datetime.datetime.now().strftime('%Y-%m-%d')}")
+                    
+                    # Также показываем прямую ссылку
+                    download_url = github_storage.get_download_url()
+                    if download_url:
+                        send_msg(cid, f"🔗 <b>Прямая ссылка:</b>\n{download_url}")
+                    
+                    # Удаляем временный файл
+                    try:
+                        os.remove(file_path)
+                    except:
+                        pass
+                    
+                    add_log("logs_downloaded", cid)
+                else:
+                    send_msg(cid, content, get_admin_main_keyboard())
+                
+                if status_msg:
+                    delete_msg(cid, status_msg.json()['result']['message_id'])
+                return
+            
+            # ==========================================================
+            # 🧹 ОЧИСТИТЬ ЛОГИ (В GITHUB)
+            # ==========================================================
+            if text == "🧹 ОЧИСТИТЬ ЛОГИ":
+                with db_lock:
+                    SYSTEM_LOGS.clear()
+                
+                if github_storage.authenticated:
+                    result = github_storage.clear_logs()
+                    if result:
+                        send_msg(cid, "✅ Логи в GitHub очищены", get_admin_main_keyboard())
+                    else:
+                        send_msg(cid, "⚠️ Логи в памяти очищены, но GitHub ошибка", get_admin_main_keyboard())
+                else:
+                    send_msg(cid, "✅ Логи в памяти очищены", get_admin_main_keyboard())
+                
+                add_log("logs_cleared", cid)
+                return
+            
+            # ==========================================================
+            # 💾 СОХРАНИТЬ В GITHUB
+            # ==========================================================
+            if text == "💾 СОХРАНИТЬ В GITHUB":
+                if not github_storage.authenticated:
+                    send_msg(cid, "❌ GitHub не настроен", get_admin_main_keyboard())
+                    return
+                
+                status_msg = send_msg(cid, "🔄 Сохраняю логи в GitHub...")
+                
+                result = force_save_logs()
+                
+                if status_msg:
+                    delete_msg(cid, status_msg.json()['result']['message_id'])
+                
+                if result:
+                    send_msg(cid, f"✅ Логи сохранены в GitHub!\n📁 {Config.GITHUB_LOGS_PATH}", get_admin_main_keyboard())
+                else:
+                    send_msg(cid, "❌ Ошибка сохранения в GitHub", get_admin_main_keyboard())
+                
+                add_log("logs_saved_github", cid)
+                return
+            
+            # ==========================================================
+            # 🌐 GitHub СТАТУС
+            # ==========================================================
+            if text == "🌐 GitHub СТАТУС":
+                if github_storage.authenticated:
+                    repo = github_storage.repo
+                    status = f"""
+<b>🌐 GitHub СТАТУС</b>
+────────────────
+✅ Авторизация: Успешно
+📁 Репозиторий: {Config.GITHUB_REPO}
+📝 Файл логов: {Config.GITHUB_LOGS_PATH}
+👤 Владелец: {repo.owner.login}
+🌿 Ветка: {repo.default_branch}
+🔗 Ссылка: {repo.html_url}
+────────────────"""
+                else:
+                    status = f"""
+<b>🌐 GitHub СТАТУС</b>
+────────────────
+❌ Авторизация: Не настроена
+📁 Репозиторий: {Config.GITHUB_REPO}
+📝 Файл логов: {Config.GITHUB_LOGS_PATH}
+────────────────
+⚠️ <b>Как настроить:</b>
+1. Создать токен на github.com/settings/tokens
+2. Добавить права 'repo'
+3. Вставить токен в Config.GITHUB_TOKEN
+4. Указать repo: "юзернейм/репозиторий"
+────────────────"""
+                
+                send_msg(cid, status, get_admin_main_keyboard())
+                return
+            
+            if text == "📢 РАССЫЛКА":
+                with db_lock:
+                    USER_STATES[cid] = 'broadcast'
+                send_msg(cid, "📥 Отправь пост для рассылки:", get_cancel_keyboard())
+                return
+            
+            if text == "⚙️ УПРАВЛЕНИЕ":
+                send_msg(cid, "⚙️ <b>Управление системой:</b>", get_manage_keyboard())
+                return
+            
+            if text == "⏱️ ТАЙМАУТЫ":
+                send_msg(cid, "⏱️ <b>Настройка таймаутов:</b>\n\nОтправь ID пользователя или выбери время для всех:", get_timeout_keyboard())
+                with db_lock:
+                    USER_STATES[cid] = 'waiting_timeout_user'
+                return
+            
+            if text == "➕ ДОБАВИТЬ АДМИНА":
+                if cid == Config.MAIN_ADMIN_ID:
+                    send_msg(cid, "👑 Отправь ID пользователя, которого хочешь сделать админом:", get_cancel_keyboard())
+                    with db_lock:
+                        USER_STATES[cid] = 'add_admin'
+                else:
+                    send_msg(cid, "❌ Только главный админ может добавлять админов", get_admin_main_keyboard())
+                return
+            
+            if text == "➖ УДАЛИТЬ АДМИНА":
+                if cid == Config.MAIN_ADMIN_ID:
+                    admins_list = "\n".join([f"<code>{aid}</code>" for aid in ADMINS_DB if aid != Config.MAIN_ADMIN_ID])
+                    send_msg(cid, f"👑 Отправь ID админа для удаления:\n\n{admins_list}", get_cancel_keyboard())
+                    with db_lock:
+                        USER_STATES[cid] = 'remove_admin'
+                else:
+                    send_msg(cid, "❌ Только главный админ может удалять админов", get_admin_main_keyboard())
+                return
+            
+            if text == "🔒 ЗАБЛОКИРОВАТЬ":
+                send_msg(cid, "🔒 Отправь ID пользователя для блокировки:", get_cancel_keyboard())
+                with db_lock:
+                    USER_STATES[cid] = 'ban_user'
+                return
+            
+            if text == "🔓 РАЗБЛОКИРОВАТЬ":
+                send_msg(cid, "🔓 Отправь ID пользователя для разблокировки:", get_cancel_keyboard())
+                with db_lock:
+                    USER_STATES[cid] = 'unban_user'
+                return
+            
+            if text == "📨 ОТВЕТИТЬ ЮЗЕРУ":
+                send_msg(cid, "📨 Отправь ID пользователя и сообщение в формате:\n<code>123456789 Привет!</code>", get_cancel_keyboard())
+                with db_lock:
+                    USER_STATES[cid] = 'reply_user'
+                return
+            
+            if text == "💾 БЕКАП":
+                backup = f"""
+<b>💾 БЕКАП СИСТЕМЫ</b>
+────────────────
+👥 Юзеров: {len(USERS_DB)}
+👑 Админов: {len(ADMINS_DB)}
+🚫 Забанено: {len(BANNED_USERS)}
+📊 Сообщений: {ADMIN_STATS['total_messages']}
+🖼 Картинок: {ADMIN_STATS['total_images']}
+📝 Логов в буфере: {len(SYSTEM_LOGS)}
+────────────────
+🌐 GitHub: {'✅' if github_storage.authenticated else '❌'}"""
+                send_msg(cid, backup, get_admin_main_keyboard())
+                add_log("backup_created", cid)
+                return
+            
+            if text == "🔙 НАЗАД В МЕНЮ" or text == "🔙 Назад":
+                send_msg(cid, "Главное меню:", get_admin_main_keyboard())
+                with db_lock:
+                    if cid in USER_STATES:
+                        USER_STATES.pop(cid)
+                return
+            
+            if text == "🔄 СБРОС СТАТИСТИКИ":
+                with db_lock:
+                    ADMIN_STATS['total_messages'] = 0
+                    ADMIN_STATS['total_images'] = 0
+                    ADMIN_STATS['start_time'] = datetime.datetime.now()
+                send_msg(cid, "✅ Статистика сброшена", get_manage_keyboard())
+                add_log("stats_reset", cid)
+                return
+        
+
+        # ==========================================================
+        # ОБРАБОТКА АДМИНСКИХ СОСТОЯНИЙ
+        # ==========================================================
+        if is_admin:
+            
+            if state == 'add_admin' and text and text != "❌ Отмена":
+                try:
+                    new_admin = int(text)
+                    if new_admin in ADMINS_DB:
+                        send_msg(cid, "❌ Этот пользователь уже админ", get_admin_main_keyboard())
+                    else:
+                        with db_lock:
+                            ADMINS_DB.add(new_admin)
+                        send_msg(cid, f"✅ Пользователь <code>{new_admin}</code> теперь админ!", get_admin_main_keyboard())
+                        send_msg(new_admin, "👑 Вам выданы права администратора!", get_admin_main_keyboard())
+                        add_log("admin_added", cid, new_admin)
+                except:
+                    send_msg(cid, "❌ Неверный ID", get_admin_main_keyboard())
+                
+                with db_lock:
+                    USER_STATES.pop(cid, None)
+                return
+            
+            if state == 'remove_admin' and text and text != "❌ Отмена":
+                try:
+                    remove_id = int(text)
+                    if remove_id == Config.MAIN_ADMIN_ID:
+                        send_msg(cid, "❌ Нельзя удалить главного админа", get_admin_main_keyboard())
+                    elif remove_id in ADMINS_DB:
+                        with db_lock:
+                            ADMINS_DB.remove(remove_id)
+                        send_msg(cid, f"✅ Админ <code>{remove_id}</code> удален", get_admin_main_keyboard())
+                        send_msg(remove_id, "👤 Ваши права администратора отозваны", get_main_keyboard())
+                        add_log("admin_removed", cid, remove_id)
+                    else:
+                        send_msg(cid, "❌ Этот пользователь не админ", get_admin_main_keyboard())
+                except:
+                    send_msg(cid, "❌ Неверный ID", get_admin_main_keyboard())
+                
+                with db_lock:
+                    USER_STATES.pop(cid, None)
+                return
+            
+            if state == 'ban_user' and text and text != "❌ Отмена":
+                try:
+                    ban_id = int(text)
+                    if ban_id in ADMINS_DB:
+                        send_msg(cid, "❌ Нельзя забанить админа", get_admin_main_keyboard())
+                    else:
+                        with db_lock:
+                            BANNED_USERS.add(ban_id)
+                        send_msg(cid, f"✅ Пользователь <code>{ban_id}</code> забанен", get_admin_main_keyboard())
+                        add_log("user_banned", cid, ban_id)
+                except:
+                    send_msg(cid, "❌ Неверный ID", get_admin_main_keyboard())
+                
+                with db_lock:
+                    USER_STATES.pop(cid, None)
+                return
+            
+            if state == 'unban_user' and text and text != "❌ Отмена":
+                try:
+                    unban_id = int(text)
+                    if unban_id in BANNED_USERS:
+                        with db_lock:
+                            BANNED_USERS.remove(unban_id)
+                        send_msg(cid, f"✅ Пользователь <code>{unban_id}</code> разбанен", get_admin_main_keyboard())
+                        add_log("user_unbanned", cid, unban_id)
+                    else:
+                        send_msg(cid, "❌ Этот пользователь не в бане", get_admin_main_keyboard())
+                except:
+                    send_msg(cid, "❌ Неверный ID", get_admin_main_keyboard())
+                
+                with db_lock:
+                    USER_STATES.pop(cid, None)
+                return
+            
+            if state == 'reply_user' and text and text != "❌ Отмена":
+                try:
+                    parts = text.split(' ', 1)
+                    if len(parts) == 2:
+                        target_id = int(parts[0])
+                        reply_text = parts[1]
+                        
+                        result = send_msg(target_id, f"📢 <b>Ответ от админа:</b>\n\n{reply_text}")
+                        
+                        if result and result.status_code == 200:
+                            send_msg(cid, f"✅ Ответ отправлен пользователю {target_id}", get_admin_main_keyboard())
+                            add_log("admin_replied", cid, target_id, reply_text[:50])
+                        else:
+                            send_msg(cid, f"❌ Не удалось отправить пользователю {target_id}", get_admin_main_keyboard())
+                    else:
+                        send_msg(cid, "❌ Формат: ID сообщение", get_admin_main_keyboard())
+                except:
+                    send_msg(cid, "❌ Ошибка. Формат: 123456789 Привет", get_admin_main_keyboard())
+                
+                with db_lock:
+                    USER_STATES.pop(cid, None)
+                return
+            
+            if state == 'waiting_timeout_user' and text and text != "❌ Отмена":
+                if text in ["⏱️ 30 сек", "⏱️ 60 сек", "⏱️ 120 сек", "⏱️ 5 мин", "⏱️ 10 мин", "⏱️ 30 мин", "⏱️ 1 час", "⏱️ 3 часа", "⏱️ 12 часов", "⏱️ 24 часа", "⏱️ Без лимита"]:
+                    timeouts = {
+                        "⏱️ 30 сек": 30, "⏱️ 60 сек": 60, "⏱️ 120 сек": 120,
+                        "⏱️ 5 мин": 300, "⏱️ 10 мин": 600, "⏱️ 30 мин": 1800,
+                        "⏱️ 1 час": 3600, "⏱️ 3 часа": 10800, "⏱️ 12 часов": 43200,
+                        "⏱️ 24 часа": 86400, "⏱️ Без лимита": 0
+                    }
+                    
+                    timeout_value = timeouts[text]
+                    
+                    with db_lock:
+                        for uid in USERS_DB:
+                            USER_TIMEOUTS[uid] = timeout_value
+                    
+                    send_msg(cid, f"✅ Таймаут для всех пользователей установлен: {text}", get_admin_main_keyboard())
+                    add_log("timeout_all_set", cid, details=text)
+                    
+                    with db_lock:
+                        USER_STATES.pop(cid, None)
+                    return
+                else:
+                    try:
+                        target_id = int(text)
+                        send_msg(cid, f"⏱️ Выбери время для пользователя <code>{target_id}</code>:", get_timeout_keyboard())
+                        with db_lock:
+                            USER_STATES[cid] = f'set_timeout_{target_id}'
+                    except:
+                        send_msg(cid, "❌ Неверный ID. Отправь ID пользователя:", get_timeout_keyboard())
+                return
+            
+            if state and state.startswith('set_timeout_') and text and text != "❌ Отмена":
+                target_id = int(state.replace('set_timeout_', ''))
+                
+                timeouts = {
+                    "⏱️ 30 сек": 30, "⏱️ 60 сек": 60, "⏱️ 120 сек": 120,
+                    "⏱️ 5 мин": 300, "⏱️ 10 мин": 600, "⏱️ 30 мин": 1800,
+                    "⏱️ 1 час": 3600, "⏱️ 3 часа": 10800, "⏱️ 12 часов": 43200,
+                    "⏱️ 24 часа": 86400, "⏱️ Без лимита": 0
+                }
+                
+                if text in timeouts:
+                    timeout_value = timeouts[text]
+                    
+                    with db_lock:
+                        USER_TIMEOUTS[target_id] = timeout_value
+                    
+                    send_msg(cid, f"✅ Таймаут для пользователя <code>{target_id}</code> установлен: {text}", get_admin_main_keyboard())
+                    add_log("timeout_user_set", cid, target_id, text)
+                    
+                    with db_lock:
+                        USER_STATES.pop(cid, None)
+                return
+            
+            if state == 'broadcast' and text and text != "❌ Отмена":
+                with db_lock:
+                    USER_STATES.pop(cid, None)
+                
+                success = 0
+                users_copy = list(USERS_DB)
+                status_msg = send_msg(cid, f"📢 Рассылка: 0/{len(users_copy)}")
+                
+                for i, uid in enumerate(users_copy):
+                    if uid not in BANNED_USERS and uid != cid:
+                        if copy_msg(uid, cid, msg["message_id"]):
+                            success += 1
+                    if i % 10 == 0 and status_msg:
+                        edit_msg(cid, status_msg.json()['result']['message_id'], f"📢 Рассылка: {i+1}/{len(users_copy)}")
+                    time.sleep(0.05)
+                
+                send_msg(cid, f"✅ Рассылка завершена!\nДоставлено: {success}/{len(users_copy)}", get_admin_main_keyboard())
+                add_log("broadcast", cid, details=f"Sent to {success}/{len(users_copy)}")
+                return
+        
+        # ==========================================================
+        # AI ЧАТ
+        # ==========================================================
+        if state == 'ai_chat' and text and text != "❌ Отмена":
+            send_typing(cid)
+            
+            progress = send_msg(cid, "🔄 0%")
+            if progress:
+                msg_id = progress.json()['result']['message_id']
+                time.sleep(0.1)
+                edit_msg(cid, msg_id, "🔄 50%")
+                time.sleep(0.1)
+                delete_msg(cid, msg_id)
+            
+            response = fast_ai_response(text)
+            settings = USER_SETTINGS.get(cid, {'speed': 0.03, 'mode': 'words'})
+            fast_animate(cid, response, settings)
+            
+            ADMIN_STATS['total_messages'] += 1
+            with db_lock:
+                USER_STATES.pop(cid, None)
+            return
+        
+        # ==========================================================
+        # ГЕНЕРАЦИЯ
+        # ==========================================================
+        if state == 'generate' and text and text != "❌ Отмена":
+            send_typing(cid)
+            
+            progress = send_msg(cid, "🎨 0%")
+            if progress:
+                msg_id = progress.json()['result']['message_id']
+                time.sleep(0.2)
+                edit_msg(cid, msg_id, "🎨 50%")
+                time.sleep(0.2)
+                delete_msg(cid, msg_id)
+            
+            img_url = generate_image(text)
+            
+            if img_url:
+                send_photo(cid, img_url, f"🖼 <b>{text}</b>")
+                ADMIN_STATS['total_images'] += 1
+            else:
+                kb = get_admin_main_keyboard() if is_admin else get_main_keyboard()
+                send_msg(cid, "❌ Ошибка генерации", kb)
+            
+            with db_lock:
+                USER_STATES.pop(cid, None)
+            return
+        
+        # ==========================================================
+        # ЛЮБОЙ ТЕКСТ
+        # ==========================================================
+        if text and not text.startswith("/") and text != "❌ Отмена":
+            send_typing(cid)
+            
+            progress = send_msg(cid, "🔄 0%")
+            if progress:
+                msg_id = progress.json()['result']['message_id']
+                time.sleep(0.1)
+                edit_msg(cid, msg_id, "🔄 50%")
+                time.sleep(0.1)
+                delete_msg(cid, msg_id)
+            
+            response = fast_ai_response(text)
+            settings = USER_SETTINGS.get(cid, {'speed': 0.03, 'mode': 'words'})
+            fast_animate(cid, response, settings)
+            
+            ADMIN_STATS['total_messages'] += 1
+    
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        try:
+            kb = get_admin_main_keyboard() if cid in ADMINS_DB else get_main_keyboard()
+            send_msg(cid, "⚠️ Ошибка", kb)
+        except:
+            pass
+
+# ==============================================================================
+# 🚀 ЗАПУСК
+# ==============================================================================
+if __name__ == "__main__":
+    logger.info(f"TITAN {Config.VERSION} starting on port {Config.PORT}")
+    logger.info(f"Main Admin ID: {Config.MAIN_ADMIN_ID}")
+    
+    if github_storage.authenticated:
+        logger.info(f"✅ GitHub connected: {Config.GITHUB_REPO}")
+        # Сохраняем логи при запуске
+        save_logs_to_github()
+    else:
+        logger.warning("⚠️ GitHub not configured. Logs will not be saved.")
+    
+    app.run(host='0.0.0.0', port=Config.PORT, threaded=True)
