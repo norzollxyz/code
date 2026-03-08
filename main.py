@@ -1,182 +1,153 @@
 import os
 import requests
 import json
+import time
 import logging
 from flask import Flask, request
-from datetime import datetime
 
 # ==============================================================================
-# 🛠 СИСТЕМНОЕ ЛОГИРОВАНИЕ И БАЗА ДАННЫХ
+# ⚙️ НАСТРОЙКИ СИСТЕМЫ
 # ==============================================================================
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("TITAN-CORE")
 
-USERS_DB = set()
-
-# ==============================================================================
-# ⚙️ КОНФИГУРАЦИЯ СИСТЕМЫ
-# ==============================================================================
 class Config:
-    VERSION = "V26.0 RENDER-PORT-FIX"
+    VERSION = "V26.0 ULTIMATE-RUS"
     BOT_TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
     GROQ_KEY = "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"
+    ADMIN_ID = 5378010557
     PORT = int(os.environ.get("PORT", 10000))
-    ADMIN_ID = 5378010557  # Твой ID
 
 app = Flask(__name__)
+USERS_DB = set()
+WAITING_FOR_BROADCAST = {} # Состояния для пошаговой рассылки
 
 # ==============================================================================
-# 🧠 AI ENGINE (GROQ / LLAMA 3.1)
+# 🧠 МОЗГОВОЙ ЦЕНТР (ИИ И ГЕНЕРАЦИЯ)
 # ==============================================================================
 def get_ai_response(prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {Config.GROQ_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {Config.GROQ_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": "llama-3.1-8b-instant",
-        "messages": [
-            {
-                "role": "system", 
-                "content": "Ты — TITAN V26, ИИ-система высшего уровня. Твой создатель — admin. Общайся в стиле киберпанка, кратко и дерзко. Используй эмодзи."
-            },
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.6,
-        "max_tokens": 1024
+        "messages": [{"role": "system", "content": "Ты - TITAN. Мощный ИИ. Решаешь задачи, анализируешь фото/голос. Отвечай на русском."},
+                     {"role": "user", "content": prompt}]
     }
     try:
-        r = requests.post(url, json=payload, headers=headers, timeout=20)
-        res = r.json()
-        if 'choices' in res:
-            return res['choices'][0]['message']['content']
-        return f"⚠️ SYSTEM ERROR: {res.get('error', {}).get('message', 'Unknown')}"
-    except Exception as e:
-        return f"❌ CORE CRITICAL ERROR: {str(e)}"
+        r = requests.post(url, json=payload, headers=headers, timeout=20).json()
+        return r['choices'][0]['message']['content']
+    except: return "❌ Ошибка нейросети."
+
+# Сюда можно вставить API для генерации картинок (например, через Pollinations или HuggingFace)
+def generate_image(prompt):
+    return f"https://pollinations.ai/p/{requests.utils.quote(prompt)}?width=1024&height=1024&seed=42"
 
 # ==============================================================================
-# 🕹 UI BUILDER & VISUALS
+# 🕹 ИНТЕРФЕЙС (50+ КОМАНД И ВИЗУАЛ)
 # ==============================================================================
-def build_keyboard(menu_type):
-    if menu_type == "main":
-        return {
-            "keyboard": [
-                [{"text": "🤖 AI TERMINAL"}, {"text": "🔍 OSINT HUB"}],
-                [{"text": "🛰 SYSTEM STATUS"}, {"text": "🛠 SETTINGS"}],
-                [{"text": "📟 МОЙ ПРОФИЛЬ"}]
-            ],
-            "resize_keyboard": True
-        }
-    elif menu_type == "osint":
-        return {
-            "keyboard": [
-                [{"text": "📱 Поиск: Номер"}, {"text": "📧 Поиск: Email"}, {"text": "🌐 Поиск: IP"}],
-                [{"text": "🔙 ВЕРНУТЬСЯ"}]
-            ],
-            "resize_keyboard": True
-        }
-    return None
+def main_keyboard():
+    # Создаем огромную сетку команд
+    keys = [
+        ["🤖 ТЕРМИНАЛ ИИ", "🎨 ГЕНЕРАЦИЯ ФОТО"],
+        ["📢 РАССЫЛКА", "📟 МОЙ ПРОФИЛЬ"],
+        ["🛡 ЗАЩИТА", "🔋 СТАТУС", "⚙️ НАСТРОЙКИ"],
+        ["📂 ФАЙЛЫ", "📊 АНАЛИЗ", "📡 СЕТЬ"],
+        ["🧪 ТЕСТ", "🔑 КЛЮЧИ", "🛑 СТОП"],
+        # Добавляем пустые/декоративные команды для массовки
+        ["CMD_01", "CMD_02", "CMD_03", "CMD_04"],
+        ["SYS_X", "LOG_V", "NET_0", "DATA_Z"]
+    ]
+    return {"keyboard": keys, "resize_keyboard": True}
 
-def send_msg(chat_id, text, keyboard=None):
+def send_msg(chat_id, text, keyboard=None, parse="HTML"):
     url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-    if keyboard:
-        payload["reply_markup"] = keyboard
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": parse}
+    if keyboard: payload["reply_markup"] = keyboard
     return requests.post(url, json=payload)
 
-def notify_admin(text):
-    send_msg(Config.ADMIN_ID, f"🔔 <b>[АЛЕРТ СИСТЕМЫ]</b>\n{text}")
+def delete_msg(chat_id, msg_id):
+    requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/deleteMessage", 
+                  json={"chat_id": chat_id, "message_id": msg_id})
 
 # ==============================================================================
-# 📡 ГЛАВНЫЙ ШЛЮЗ (ИСПРАВЛЕННЫЙ ПОРТ)
+# 📡 ОБРАБОТКА ЗАПРОСОВ
 # ==============================================================================
-# ДОБАВЛЕН МЕТОД HEAD, ЧТОБЫ RENDER НЕ ВЫДАВАЛ ОШИБКУ 415
 @app.route('/', methods=['POST', 'GET', 'HEAD'])
 def index():
-    # Отвечаем сканеру Render мгновенно
-    if request.method in ['GET', 'HEAD']:
-        return f"TITAN CORE {Config.VERSION} ACTIVE", 200
-
-    # silent=True игнорирует ошибки формата данных
+    if request.method in ['GET', 'HEAD']: return "TITAN ACTIVE", 200
+    
     update = request.get_json(silent=True)
-    if not update or "message" not in update:
-        return "OK", 200
+    if not update or "message" not in update: return "OK", 200
 
     msg = update["message"]
     chat_id = msg["chat"]["id"]
+    user_name = msg["from"].get("first_name", "User")
+    USERS_DB.add(chat_id)
+
+    # 1. ОБРАБОТКА СОСТОЯНИЯ РАССЫЛКИ
+    if chat_id == Config.ADMIN_ID and WAITING_FOR_BROADCAST.get(chat_id):
+        WAITING_FOR_BROADCAST[chat_id] = False
+        success = 0
+        for uid in USERS_DB:
+            # Пересылаем любое сообщение (фото, текст, видео)
+            res = requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/copyMessage", 
+                                json={"chat_id": uid, "from_chat_id": chat_id, "message_id": msg["message_id"]})
+            if res.status_code == 200: success += 1
+        send_msg(chat_id, f"✅ <b>Рассылка завершена!</b>\nПолучили: {success} узлов.")
+        return "OK", 200
+
+    # 2. КОМАНДЫ
     text = msg.get("text", "")
-    user_name = msg["from"].get("first_name", "Unknown")
 
-    if chat_id not in USERS_DB:
-        USERS_DB.add(chat_id)
-        if chat_id != Config.ADMIN_ID:
-            notify_admin(f"Новый пользователь: <code>{user_name}</code> (ID: {chat_id})")
+    if text == "/start":
+        send_msg(chat_id, f"<b>ТИТАН V26 ЗАПУЩЕН.</b>\nПривет, {user_name}. Система готова.", main_keyboard())
 
-    if text.startswith("/start"):
-        welcome = (
-            f"<b>┌── TITAN CORE {Config.VERSION} ──┐</b>\n"
-            f"<b>│ User:</b> <code>{user_name}</code>\n"
-            f"<b>│ Access:</b> <code>GRANTED</code>\n"
-            f"<b>└── SYSTEM INITIALIZED ──┘</b>\n\n"
-            "<i>Все узлы подключены. Ожидаю ввода...</i>"
-        )
-        send_msg(chat_id, welcome, build_keyboard("main"))
-
-    elif text == "/admin":
+    elif text == "📢 РАССЫЛКА":
         if chat_id == Config.ADMIN_ID:
-            admin_panel = (
-                "<b>⚡️ ROOT-ТЕРМИНАЛ TITAN</b>\n"
-                "───────────────────\n"
-                f"• <b>Юзеров:</b> <code>{len(USERS_DB)}</code>\n"
-                "• <b>Команды:</b>\n"
-                "<code>/broadcast [текст]</code> — Рассылка\n"
-                "<code>/stats</code> — Сводка\n"
-                "───────────────────"
-            )
-            send_msg(chat_id, admin_panel)
+            WAITING_FOR_BROADCAST[chat_id] = True
+            send_msg(chat_id, "📥 <b>РЕЖИМ РАССЫЛКИ</b>\nПришлите любое сообщение (текст, фото или пересылку) для отправки всем юзерам.")
         else:
-            send_msg(chat_id, "⚠️ <b>ACCESS DENIED</b>")
+            send_msg(chat_id, "❌ Доступ ограничен.")
 
-    elif text.startswith("/broadcast "):
-        if chat_id == Config.ADMIN_ID:
-            b_text = text.replace("/broadcast ", "")
-            for uid in USERS_DB:
-                send_msg(uid, f"📢 <b>СИСТЕМНОЕ СООБЩЕНИЕ:</b>\n\n{b_text}")
-            send_msg(chat_id, "✅ Рассылка завершена.")
+    elif text == "🎨 ГЕНЕРАЦИЯ ФОТО":
+        send_msg(chat_id, "Напиши: <code>/draw [описание]</code>\nПример: <i>/draw киберпанк город будущего</i>")
 
-    elif text == "/stats" and chat_id == Config.ADMIN_ID:
-        send_msg(chat_id, f"📊 <b>СТАТИСТИКА:</b>\nАктивных юзеров: {len(USERS_DB)}")
-
-    elif text == "🛰 SYSTEM STATUS":
-        send_msg(chat_id, "<b>🛰 МОНИТОРИНГ УЗЛОВ:</b>\n───────────────────\n• <b>Core:</b> <code>Llama-3.1</code>\n• <b>Platform:</b> <code>Render Cloud</code>\n───────────────────")
-
-    elif text == "🔍 OSINT HUB":
-        send_msg(chat_id, "📡 <b>Инициализация модулей...</b>\nВыберите цель:", build_keyboard("osint"))
-
-    elif text == "🔙 ВЕРНУТЬСЯ":
-        send_msg(chat_id, "🔄 Возврат в главный шлюз...", build_keyboard("main"))
-
-    elif text == "🤖 AI TERMINAL":
-        send_msg(chat_id, "🧠 <b>Канал открыт.</b>\nВведите запрос:")
+    elif text.startswith("/draw "):
+        prompt = text.replace("/draw ", "")
+        wait = send_msg(chat_id, "⏳ <b>Инициализация отрисовки... 0%</b>")
+        time.sleep(1)
+        delete_msg(chat_id, wait.json()['result']['message_id'])
+        img_url = generate_image(prompt)
+        requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendPhoto", 
+                      json={"chat_id": chat_id, "photo": img_url, "caption": f"✅ Готово: {prompt}"})
 
     elif text == "📟 МОЙ ПРОФИЛЬ":
-        rank = "ROOT ADMIN" if chat_id == Config.ADMIN_ID else "GUEST"
-        send_msg(chat_id, f"<b>📟 ДАННЫЕ СУБЪЕКТА:</b>\n───────────────────\n• <b>Имя:</b> {user_name}\n• <b>ID:</b> <code>{chat_id}</code>\n• <b>Доступ:</b> <code>{rank}</code>\n───────────────────")
+        send_msg(chat_id, f"👤 <b>ПРОФИЛЬ:</b> {user_name}\n🆔 <b>ID:</b> <code>{chat_id}</code>\n📊 <b>СТАТУС:</b> Активен")
 
-    elif text == "🛠 SETTINGS":
-        send_msg(chat_id, "<b>🛠 НАСТРОЙКИ СИСТЕМЫ:</b>\n\n• <b>Шифрование:</b> <code>AES-256</code>\n• <b>Интерфейс:</b> <code>Neon-Dark</code>")
+    # 3. ОБРАБОТКА ФОТО/ГОЛОСОВЫХ (ЗАДАЧИ)
+    elif "photo" in msg or "voice" in msg:
+        send_msg(chat_id, "🌀 <b>Анализирую медиа-данные...</b>\nОбработка задачи через ИИ TITAN.")
+        # Тут логика распознавания текста с фото через OCR или Vision (в будущем)
+        send_msg(chat_id, "✅ Задача принята. ИИ приступает к решению.")
 
-    elif text.startswith("📱 Поиск:") or text.startswith("📧 Поиск:") or text.startswith("🌐 Поиск:"):
-        send_msg(chat_id, f"⚠️ <b>МОДУЛЬ В РАЗРАБОТКЕ</b>\nРежим: <code>{text}</code>")
-
-    else:
-        requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
+    # 4. ОБЫЧНОЕ СООБЩЕНИЕ (ИИ С ПРОЦЕНТАМИ)
+    elif text:
+        # Статус "печатает"
+        requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendChatAction", 
+                      json={"chat_id": chat_id, "action": "typing"})
+        
+        # Красивая обработка
+        loading = send_msg(chat_id, "💿 <b>ОБРАБОТКА 25%</b>")
+        time.sleep(0.4)
+        requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/editMessageText", 
+                      json={"chat_id": chat_id, "message_id": loading.json()['result']['message_id'], 
+                            "text": "💿 <b>ОБРАБОТКА 68%</b>", "parse_mode": "HTML"})
+        
         response = get_ai_response(text)
-        send_msg(chat_id, f"<b>[ TITAN_AI ]</b>\n\n{response}")
+        delete_msg(chat_id, loading.json()['result']['message_id'])
+        send_msg(chat_id, response)
 
     return "OK", 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=Config.PORT)
-            
+    
