@@ -5,7 +5,6 @@ import logging
 import threading
 import time
 import datetime
-import random
 from flask import Flask, request
 
 # ==============================================================================
@@ -24,8 +23,7 @@ class Config:
 app = Flask(__name__)
 
 USERS_DB = set()
-USER_STATES = {}  # {'chat_id': 'waiting_for_broadcast'}
-USER_CONTEXT = {}  # История диалогов
+USER_STATES = {}
 ADMIN_STATS = {
     'total_messages': 0,
     'total_images': 0,
@@ -34,106 +32,10 @@ ADMIN_STATS = {
 db_lock = threading.Lock()
 
 # ==============================================================================
-# 🧠 ЕДИНЫЙ МОЗГ - GROQ AI (ВСЕ ФУНКЦИИ ЧЕРЕЗ НЕГО)
-# ==============================================================================
-def ask_groq(prompt, system_prompt="Ты полезный ассистент TITAN. Отвечай кратко и по делу.", temp=0.7):
-    """Универсальная функция для всех запросов к ИИ"""
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {Config.GROQ_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": "llama-3.1-8b-instant",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": temp,
-        "max_tokens": 500
-    }
-    
-    try:
-        logger.info(f"GROQ Request: {prompt[:50]}...")
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        return data['choices'][0]['message']['content']
-    except Exception as e:
-        logger.error(f"GROQ Error: {e}")
-        return f"⚠️ Ошибка связи с ИИ: {str(e)[:50]}"
-
-# ==============================================================================
-# 🎨 КОНКРЕТНЫЕ ФУНКЦИИ (КАЖДАЯ ЧЕРЕЗ GROQ)
-# ==============================================================================
-def get_ai_quote():
-    """ИИ генерирует цитату дня"""
-    prompt = "Сгенерируй вдохновляющую цитату на сегодня. Короткую, мудрую, со смыслом. На русском языке. Добавь в конце имя автора (вымышленное или реальное)."
-    system = "Ты генератор цитат. Создавай глубокие, запоминающиеся фразы."
-    return ask_groq(prompt, system, temp=0.9)
-
-def get_ai_wisdom():
-    """ИИ генерирует мудрость дня"""
-    prompt = "Напиши короткую житейскую мудрость или урок на сегодня. Что-то про жизнь, счастье, успех. На русском, 1-2 предложения."
-    system = "Ты философ, делящийся мудростью простыми словами."
-    return ask_groq(prompt, system, temp=0.8)
-
-def get_ai_fact():
-    """ИИ генерирует случайный факт"""
-    prompt = "Расскажи интересный, малоизвестный факт о мире, науке или технологиях. На русском языке. Факт должен быть правдивым."
-    system = "Ты энциклопедия. Знаешь всё и делишься интересными фактами."
-    return ask_groq(prompt, system, temp=0.7)
-
-def get_ai_joke():
-    """ИИ генерирует шутку"""
-    prompt = "Напиши короткую смешную шутку или анекдот на русском. Не пошло, просто с юмором."
-    system = "Ты стендап-комик. Твои шутки смешные и уместные."
-    return ask_groq(prompt, system, temp=0.9)
-
-def get_ai_advice():
-    """ИИ дает совет на сегодня"""
-    prompt = "Дай короткий полезный совет на сегодня. Про продуктивность, отдых, отношения или саморазвитие. 1 предложение."
-    system = "Ты жизненный коуч. Даешь короткие, но ценные советы."
-    return ask_groq(prompt, system, temp=0.8)
-
-def get_ai_news():
-    """ИИ придумывает новость дня (шутливую)"""
-    prompt = "Придумай смешную или абсурдную новость дня в стиле 'Панорама'. Коротко, с юмором. На русском."
-    system = "Ты редактор сатирического новостного агентства."
-    return ask_groq(prompt, system, temp=0.95)
-
-def get_ai_poem():
-    """ИИ пишет короткое стихотворение"""
-    prompt = "Напиши короткое четверостишие на русском. Про жизнь, природу или технологии. Рифма обязательна."
-    system = "Ты поэт. Пишешь красиво и с душой."
-    return ask_groq(prompt, system, temp=0.9)
-
-def get_ai_weather():
-    """ИИ придумывает 'погоду'"""
-    prompt = "Придумай забавный прогноз погоды на сегодня. Например: 'Сегодня облачно, возможны осадки в виде печенья'. Креативно!"
-    system = "Ты синоптик с отличным чувством юмора."
-    return ask_groq(prompt, system, temp=0.9)
-
-def get_ai_horoscope():
-    """ИИ генерирует гороскоп"""
-    signs = ["Овен", "Телец", "Близнецы", "Рак", "Лев", "Дева", "Весы", "Скорпион", "Стрелец", "Козерог", "Водолей", "Рыбы"]
-    sign = random.choice(signs)
-    prompt = f"Напиши короткий смешной гороскоп для знака {sign} на сегодня. С юмором, но с добрым посылом."
-    system = "Ты астролог, но не серьезный, а прикольный."
-    return f"🔮 <b>{sign}:</b>\n{ask_groq(prompt, system, temp=0.9)}"
-
-def get_ai_motivation():
-    """Мотивация от ИИ"""
-    prompt = "Напиши короткую мотивационную фразу на сегодня. Чтобы захотелось встать и что-то сделать!"
-    system = "Ты мотивационный спикер. Заряжаешь энергией."
-    return ask_groq(prompt, system, temp=0.8)
-
-# ==============================================================================
-# 🎨 ГЛАВНОЕ МЕНЮ (ДЛЯ ВСЕХ)
+# 🎨 ГЛАВНОЕ МЕНЮ (ПО СТАРОМУ - РАБОЧЕЕ)
 # ==============================================================================
 def get_main_keyboard():
-    """Простое и понятное главное меню"""
+    """Главное меню - работает всегда"""
     keyboard = [
         ["👤 Личный кабинет", "❓ Помощь"],
         ["💬 Связаться с ИИ", "🎨 Сгенерировать"],
@@ -142,27 +44,72 @@ def get_main_keyboard():
     return {"keyboard": keyboard, "resize_keyboard": True}
 
 # ==============================================================================
-# 👑 АДМИН-МЕНЮ (ВСЕ ФУНКЦИИ ЧЕРЕЗ ИИ)
+# 👑 АДМИН-МЕНЮ (ТОЛЬКО НУЖНОЕ)
 # ==============================================================================
 def get_admin_keyboard():
-    """Каждая кнопка генерирует что-то через ИИ"""
+    """Только полезные функции для админа"""
     keyboard = [
-        # Рассылка и статистика
         ["📢 РАССЫЛКА", "📊 СТАТИСТИКА"],
-        
-        # ВСЁ ГЕНЕРИРУЕТ ИИ (10+ функций)
-        ["🎯 Цитата дня (ИИ)", "🧠 Мудрость дня (ИИ)"],
-        ["📰 Факт дня (ИИ)", "😄 Шутка (ИИ)"],
-        ["💡 Совет дня (ИИ)", "📢 Новость (ИИ)"],
-        ["📝 Стих (ИИ)", "🔮 Гороскоп (ИИ)"],
-        ["⚡ Мотивация (ИИ)", "🌤 Погода (ИИ)"],
-        
-        # Технические функции
-        ["💰 Курс валют", "🌍 Мой IP"],
-        ["👥 Все юзеры", "📤 Экспорт"],
-        ["🔙 Назад в меню"]
+        ["👥 ВСЕ ЮЗЕРЫ", "📤 БЕКАП"],
+        ["🧹 ОЧИСТИТЬ ЛОГИ", "🔄 ПЕРЕЗАПУСК"],
+        ["🔙 НАЗАД В МЕНЮ"]
     ]
     return {"keyboard": keyboard, "resize_keyboard": True}
+
+# ==============================================================================
+# ⚡ БЫСТРЫЙ ИИ (Groq - реально быстрый)
+# ==============================================================================
+def fast_ai_response(prompt):
+    """Максимально быстрый ответ от ИИ"""
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {Config.GROQ_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": "llama-3.1-8b-instant",  # Самая быстрая модель
+        "messages": [
+            {"role": "system", "content": "Ты TITAN. Отвечай кратко, по делу, без воды."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 300,  # Меньше токенов = быстрее ответ
+        "stream": False
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data['choices'][0]['message']['content']
+    except Exception as e:
+        logger.error(f"GROQ Error: {e}")
+        return "⚠️ Ошибка связи. Попробуй еще раз."
+
+# ==============================================================================
+# 🖼 ИСПРАВЛЕННАЯ ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ
+# ==============================================================================
+def generate_image_fixed(prompt):
+    """Рабочая генерация изображений"""
+    try:
+        # Используем правильный API
+        url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}"
+        params = {
+            "width": 1024,
+            "height": 1024,
+            "nologo": "true",
+            "model": "flux"  # Хорошая модель
+        }
+        response = requests.get(url, params=params, timeout=5)
+        if response.status_code == 200:
+            return response.url  # Возвращаем прямую ссылку
+        else:
+            # Запасной вариант
+            return f"https://pollinations.ai/p/{requests.utils.quote(prompt)}"
+    except Exception as e:
+        logger.error(f"Image gen error: {e}")
+        return None
 
 # ==============================================================================
 # 📤 ФУНКЦИИ TELEGRAM
@@ -173,22 +120,31 @@ def send_msg(chat_id, text, kb=None, parse_mode="HTML"):
     if kb:
         payload["reply_markup"] = kb
     try:
-        return requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logger.error(f"Send error: {e}")
+        return requests.post(url, json=payload, timeout=5)
+    except:
         return None
 
 def send_typing(chat_id):
     url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendChatAction"
-    requests.post(url, json={"chat_id": chat_id, "action": "typing"})
+    try:
+        requests.post(url, json={"chat_id": chat_id, "action": "typing"}, timeout=2)
+    except:
+        pass
 
-def edit_msg(chat_id, msg_id, text, parse_mode="HTML"):
-    url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/editMessageText"
-    payload = {"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": parse_mode}
+def send_photo(chat_id, photo_url, caption=""):
+    url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendPhoto"
+    payload = {"chat_id": chat_id, "photo": photo_url, "caption": caption, "parse_mode": "HTML"}
     try:
         return requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logger.error(f"Edit error: {e}")
+    except:
+        return None
+
+def edit_msg(chat_id, msg_id, text):
+    url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/editMessageText"
+    payload = {"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML"}
+    try:
+        return requests.post(url, json=payload, timeout=5)
+    except:
         return None
 
 def delete_msg(chat_id, msg_id):
@@ -201,45 +157,50 @@ def delete_msg(chat_id, msg_id):
 def copy_msg(to_chat, from_chat, msg_id):
     url = f"https://api.telegram.org/bot{Config.BOT_TOKEN}/copyMessage"
     try:
-        response = requests.post(url, json={"chat_id": to_chat, "from_chat_id": from_chat, "message_id": msg_id}, timeout=15)
+        response = requests.post(url, json={"chat_id": to_chat, "from_chat_id": from_chat, "message_id": msg_id}, timeout=10)
         return response.status_code == 200
     except:
         return False
 
-def get_currency():
-    """Курс валют (реальный)"""
+# ==============================================================================
+# 🎭 КРАСИВАЯ АНИМАЦИЯ ПЕЧАТИ
+# ==============================================================================
+def animate_typing(chat_id, final_text, delay=0.1):
+    """
+    Создает эффект печатания текста
+    delay = скорость печати (меньше = быстрее)
+    """
     try:
-        r = requests.get("https://www.cbr-xml-daily.ru/daily_json.js", timeout=5)
-        data = r.json()
-        usd = data['Valute']['USD']['Value']
-        eur = data['Valute']['EUR']['Value']
-        cny = data['Valute']['CNY']['Value']
-        return f"💰 <b>Курс ЦБ:</b>\nUSD: {usd:.2f}₽\nEUR: {eur:.2f}₽\nCNY: {cny:.2f}₽"
-    except:
-        return "💰 Курс временно недоступен"
-
-def get_ip():
-    """Внешний IP"""
-    try:
-        r = requests.get("https://api.ipify.org?format=json", timeout=5)
-        return f"🌍 <b>Внешний IP:</b> {r.json()['ip']}"
-    except:
-        return "🌍 IP не определен"
-
-def generate_image(prompt):
-    """Генерация изображения"""
-    encoded = requests.utils.quote(prompt)
-    return f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true"
+        # Сначала отправляем пустое сообщение
+        msg = send_msg(chat_id, "⏳")
+        if not msg:
+            return
+        
+        msg_id = msg.json()['result']['message_id']
+        
+        # Печатаем по буквам
+        current_text = ""
+        for char in final_text:
+            current_text += char
+            edit_msg(chat_id, msg_id, current_text)
+            time.sleep(delay)  # Задержка между буквами
+        
+        return msg_id
+    except Exception as e:
+        logger.error(f"Animation error: {e}")
+        # Если анимация сломалась, отправляем обычное сообщение
+        send_msg(chat_id, final_text)
+        return None
 
 # ==============================================================================
-# 📡 ОБРАБОТЧИК СООБЩЕНИЙ
+# 📡 ОБРАБОТЧИК
 # ==============================================================================
 @app.route('/', methods=['POST', 'GET', 'HEAD'])
 def webhook():
     if request.method == 'HEAD':
         return '', 200
     if request.method == 'GET':
-        return "TITAN CORE ACTIVE", 200
+        return "TITAN ACTIVE", 200
 
     if request.method == 'POST':
         update = request.get_json(silent=True)
@@ -249,29 +210,6 @@ def webhook():
             thread.start()
         return "OK", 200
 
-def process_with_progress(cid, action_text, ai_function, *args, **kwargs):
-    """Универсальная функция с прогресс-баром"""
-    # Отправляем статус
-    status = send_msg(cid, f"{action_text}: [░░░░░░░░░░] 0%")
-    if not status:
-        return
-    
-    msg_id = status.json()['result']['message_id']
-    
-    # Прогресс-бар
-    steps = ["██░░░░░░░░ 20%", "████░░░░░░ 40%", "██████░░░░ 60%", "████████░░ 80%", "██████████ 100%"]
-    for step in steps:
-        send_typing(cid)
-        edit_msg(cid, msg_id, f"{action_text}: [{step}]")
-        time.sleep(0.3)
-    
-    # Получаем результат от ИИ
-    result = ai_function(*args, **kwargs)
-    
-    # Заменяем статус на результат
-    edit_msg(cid, msg_id, result)
-    return result
-
 def process_message(update):
     try:
         msg = update["message"]
@@ -279,187 +217,201 @@ def process_message(update):
         text = msg.get("text", "")
         user_name = msg["from"].get("first_name", "User")
         
-        # Регистрация пользователя
+        # Регистрируем пользователя
         with db_lock:
             if cid not in USERS_DB:
                 USERS_DB.add(cid)
+                logger.info(f"New user: {cid}")
         
-        # Проверка состояния рассылки
+        # Проверка на рассылку
         with db_lock:
             is_broadcast = USER_STATES.get(cid) == 'broadcast'
         
-        # РАССЫЛКА (админ)
+        # РАССЫЛКА (для админа)
         if cid == Config.ADMIN_ID and is_broadcast:
             with db_lock:
                 USER_STATES.pop(cid, None)
             
             success = 0
             users_copy = list(USERS_DB)
-            status = send_msg(cid, f"📢 Рассылка: 0/{len(users_copy)}")
+            status_msg = send_msg(cid, f"📢 Рассылка: 0/{len(users_copy)}")
             
             for i, uid in enumerate(users_copy):
                 if copy_msg(uid, cid, msg["message_id"]):
                     success += 1
-                if i % 5 == 0:  # Обновляем статус каждые 5 сообщений
-                    edit_msg(cid, status.json()['result']['message_id'], f"📢 Рассылка: {i+1}/{len(users_copy)}")
-                time.sleep(0.05)
+                if i % 5 == 0 and status_msg:
+                    edit_msg(cid, status_msg.json()['result']['message_id'], f"📢 Рассылка: {i+1}/{len(users_copy)}")
+                time.sleep(0.03)  # Небольшая задержка
             
             send_msg(cid, f"✅ Рассылка завершена!\nДоставлено: {success}/{len(users_copy)}", get_admin_keyboard())
             return
         
-        # ОБРАБОТКА КОМАНД
+        # ГЛАВНОЕ МЕНЮ - СТАРТ
         if text == "/start":
-            welcome = f"<b>⚡ TITAN {Config.VERSION}</b>\n\nПривет, {user_name}! Я бот с искусственным интеллектом. Задавай вопросы, генерируй изображения, получай цитаты и мудрости от ИИ."
+            welcome = f"<b>⚡ TITAN {Config.VERSION}</b>\n\nПривет, {user_name}! Я здесь, чтобы помочь."
             send_msg(cid, welcome, get_main_keyboard())
+            return
         
-        # ГЛАВНОЕ МЕНЮ
-        elif text == "👤 Личный кабинет":
+        # КНОПКИ ГЛАВНОГО МЕНЮ
+        if text == "👤 Личный кабинет":
             role = "👑 АДМИН" if cid == Config.ADMIN_ID else "👤 ПОЛЬЗОВАТЕЛЬ"
-            msg_count = ADMIN_STATS.get('total_messages', 0)
             profile = f"""
-<b>👤 ЛИЧНЫЙ КАБИНЕТ</b>
-────────────────
-🔰 Имя: {user_name}
+<b>👤 ПРОФИЛЬ</b>
+─────────────────
+👤 Имя: {user_name}
 🆔 ID: <code>{cid}</code>
 👑 Роль: {role}
-📊 Пользователей в системе: {len(USERS_DB)}
-────────────────"""
+👥 Всего юзеров: {len(USERS_DB)}
+─────────────────"""
             send_msg(cid, profile)
+            return
         
-        elif text == "❓ Помощь":
+        if text == "❓ Помощь":
             help_text = """
 <b>❓ ПОМОЩЬ</b>
 
-<b>🤖 Основные команды:</b>
-💬 Связаться с ИИ - просто напиши вопрос
-🎨 Сгенерировать - создай изображение по тексту
+💬 <b>Связаться с ИИ</b> - нажми и пиши вопрос
+🎨 <b>Сгенерировать</b> - создай картинку
+📢 <b>Связь с админом</b> - написать мне
 
-<b>👑 Для админа:</b>
-📢 Рассылка - массовая отправка
-ИИ-функции - цитаты, мудрости, факты и многое другое
-
-<b>⚡ Версия:</b> TITAN V26.1 OMEGA"""
+⚡ Версия: TITAN V26.1
+"""
             send_msg(cid, help_text)
+            return
         
-        elif text == "💬 Связаться с ИИ":
-            send_msg(cid, "🧠 Напиши свой вопрос, и я отвечу через нейросеть.")
+        if text == "💬 Связаться с ИИ":
+            send_msg(cid, "🧠 Напиши свой вопрос...")
             with db_lock:
                 USER_STATES[cid] = 'ai_chat'
+            return
         
-        elif text == "🎨 Сгенерировать":
-            send_msg(cid, "🖼 Напиши, что сгенерировать. Например: <i>киберпанк город</i> или <i>кот в космосе</i>")
+        if text == "🎨 Сгенерировать":
+            send_msg(cid, "🖼 Напиши, что сгенерировать. Например: <i>кот в космосе</i>")
             with db_lock:
                 USER_STATES[cid] = 'generate_image'
+            return
         
-        elif text == "📢 Связь с админом":
-            send_msg(cid, "📝 Напиши сообщение, и оно уйдет админу.")
+        if text == "📢 Связь с админом":
+            send_msg(cid, "📝 Напиши сообщение для админа:")
             with db_lock:
                 USER_STATES[cid] = 'message_admin'
+            return
         
-        # АДМИНСКИЕ ФУНКЦИИ
-        elif cid == Config.ADMIN_ID and text == "📢 РАССЫЛКА":
-            with db_lock:
-                USER_STATES[cid] = 'broadcast'
-            send_msg(cid, "📥 Отправь пост для рассылки (текст, фото или перешли сообщение):", get_admin_keyboard())
-        
-        elif cid == Config.ADMIN_ID and text == "📊 СТАТИСТИКА":
-            uptime = datetime.datetime.now() - ADMIN_STATS['start_time']
-            stats = f"""
+        # АДМИНКА
+        if cid == Config.ADMIN_ID:
+            if text == "📢 РАССЫЛКА":
+                with db_lock:
+                    USER_STATES[cid] = 'broadcast'
+                send_msg(cid, "📥 Отправь пост для рассылки:", get_admin_keyboard())
+                return
+            
+            if text == "📊 СТАТИСТИКА":
+                uptime = datetime.datetime.now() - ADMIN_STATS['start_time']
+                stats = f"""
 <b>📊 СТАТИСТИКА</b>
-────────────────
-👥 Пользователей: {len(USERS_DB)}
+─────────────────
+👥 Юзеров: {len(USERS_DB)}
 📨 Сообщений: {ADMIN_STATS['total_messages']}
-🖼 Изображений: {ADMIN_STATS['total_images']}
+🖼 Картинок: {ADMIN_STATS['total_images']}
 ⏱ Аптайм: {str(uptime).split('.')[0]}
-────────────────"""
-            send_msg(cid, stats)
-        
-        # ВСЕ ИИ-ФУНКЦИИ ДЛЯ АДМИНА
-        elif cid == Config.ADMIN_ID and text == "🎯 Цитата дня (ИИ)":
-            process_with_progress(cid, "🎯 Генерация цитаты", get_ai_quote)
-        
-        elif cid == Config.ADMIN_ID and text == "🧠 Мудрость дня (ИИ)":
-            process_with_progress(cid, "🧠 Генерация мудрости", get_ai_wisdom)
-        
-        elif cid == Config.ADMIN_ID and text == "📰 Факт дня (ИИ)":
-            process_with_progress(cid, "📰 Генерация факта", get_ai_fact)
-        
-        elif cid == Config.ADMIN_ID and text == "😄 Шутка (ИИ)":
-            process_with_progress(cid, "😄 Генерация шутки", get_ai_joke)
-        
-        elif cid == Config.ADMIN_ID and text == "💡 Совет дня (ИИ)":
-            process_with_progress(cid, "💡 Генерация совета", get_ai_advice)
-        
-        elif cid == Config.ADMIN_ID and text == "📢 Новость (ИИ)":
-            process_with_progress(cid, "📢 Генерация новости", get_ai_news)
-        
-        elif cid == Config.ADMIN_ID and text == "📝 Стих (ИИ)":
-            process_with_progress(cid, "📝 Генерация стиха", get_ai_poem)
-        
-        elif cid == Config.ADMIN_ID and text == "🔮 Гороскоп (ИИ)":
-            process_with_progress(cid, "🔮 Генерация гороскопа", get_ai_horoscope)
-        
-        elif cid == Config.ADMIN_ID and text == "⚡ Мотивация (ИИ)":
-            process_with_progress(cid, "⚡ Генерация мотивации", get_ai_motivation)
-        
-        elif cid == Config.ADMIN_ID and text == "🌤 Погода (ИИ)":
-            process_with_progress(cid, "🌤 Генерация погоды", get_ai_weather)
-        
-        elif cid == Config.ADMIN_ID and text == "💰 Курс валют":
-            send_msg(cid, get_currency())
-        
-        elif cid == Config.ADMIN_ID and text == "🌍 Мой IP":
-            send_msg(cid, get_ip())
-        
-        elif cid == Config.ADMIN_ID and text == "👥 Все юзеры":
-            users_list = "\n".join([f"<code>{uid}</code>" for uid in list(USERS_DB)[:50]])
-            if len(USERS_DB) > 50:
-                users_list += f"\n... и еще {len(USERS_DB)-50}"
-            send_msg(cid, f"<b>👥 Пользователи ({len(USERS_DB)}):</b>\n{users_list}")
-        
-        elif cid == Config.ADMIN_ID and text == "🔙 Назад в меню":
-            send_msg(cid, "Главное меню:", get_main_keyboard())
+─────────────────"""
+                send_msg(cid, stats)
+                return
+            
+            if text == "👥 ВСЕ ЮЗЕРЫ":
+                users_list = "\n".join([f"<code>{uid}</code>" for uid in list(USERS_DB)[:50]])
+                if len(USERS_DB) > 50:
+                    users_list += f"\n...и еще {len(USERS_DB)-50}"
+                send_msg(cid, f"<b>👥 Всего {len(USERS_DB)}:</b>\n{users_list}")
+                return
+            
+            if text == "🔙 НАЗАД В МЕНЮ":
+                send_msg(cid, "Главное меню:", get_main_keyboard())
+                return
         
         # ОБРАБОТКА СОСТОЯНИЙ
-        elif USER_STATES.get(cid) == 'ai_chat' and text:
-            process_with_progress(cid, "🧠 Обработка запроса", ask_groq, text)
+        with db_lock:
+            state = USER_STATES.get(cid)
+        
+        # СОСТОЯНИЕ: AI ЧАТ
+        if state == 'ai_chat' and text:
+            # Сначала показываем "печатает"
+            send_typing(cid)
+            
+            # Отправляем статус обработки (2 шага - быстро)
+            status = send_msg(cid, "🔄 ОБРАБОТКА: 0%")
+            if status:
+                msg_id = status.json()['result']['message_id']
+                time.sleep(0.2)
+                edit_msg(cid, msg_id, "🔄 ОБРАБОТКА: 50%")
+                time.sleep(0.2)
+                delete_msg(cid, msg_id)
+            
+            # Получаем ответ от ИИ (быстро)
+            response = fast_ai_response(text)
+            
+            # Анимируем печать ответа
+            animate_typing(cid, response, delay=0.05)  # Быстрая печать
+            
             ADMIN_STATS['total_messages'] += 1
             with db_lock:
                 USER_STATES.pop(cid, None)
+            return
         
-        elif USER_STATES.get(cid) == 'generate_image' and text:
-            # Генерация изображения
-            status = send_msg(cid, "🖼 Генерация: [░░░░░░░░░░] 0%")
+        # СОСТОЯНИЕ: ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ
+        if state == 'generate_image' and text:
+            # Статус генерации
+            status = send_msg(cid, "🎨 ГЕНЕРАЦИЯ: 0%")
             if status:
                 msg_id = status.json()['result']['message_id']
-                
-                steps = ["██░░░░░░░░ 20%", "████░░░░░░ 40%", "██████░░░░ 60%", "████████░░ 80%", "██████████ 100%"]
-                for step in steps:
-                    edit_msg(cid, msg_id, f"🖼 Генерация: [{step}]")
-                    time.sleep(0.3)
-                
-                img_url = generate_image(text)
+                time.sleep(0.3)
+                edit_msg(cid, msg_id, "🎨 ГЕНЕРАЦИЯ: 50%")
+                time.sleep(0.3)
                 delete_msg(cid, msg_id)
+            
+            # Генерируем картинку
+            send_typing(cid)
+            img_url = generate_image_fixed(text)
+            
+            if img_url:
                 send_photo(cid, img_url, f"🖼 <b>Запрос:</b> {text}")
                 ADMIN_STATS['total_images'] += 1
+            else:
+                send_msg(cid, "⚠️ Не удалось сгенерировать. Попробуй еще раз.")
+            
             with db_lock:
                 USER_STATES.pop(cid, None)
+            return
         
-        elif USER_STATES.get(cid) == 'message_admin' and text:
-            send_msg(Config.ADMIN_ID, f"📨 <b>Сообщение от {user_name} (ID: {cid}):</b>\n\n{text}")
-            send_msg(cid, "✅ Сообщение отправлено админу!")
+        # СОСТОЯНИЕ: СООБЩЕНИЕ АДМИНУ
+        if state == 'message_admin' and text:
+            send_msg(Config.ADMIN_ID, f"📨 <b>От {user_name} (ID: {cid}):</b>\n\n{text}")
+            animate_typing(cid, "✅ Сообщение отправлено админу!", delay=0.03)
             with db_lock:
                 USER_STATES.pop(cid, None)
+            return
         
-        # ОБЫЧНЫЙ ТЕКСТ (тоже через ИИ)
-        elif text and not text.startswith("/"):
-            process_with_progress(cid, "🧠 Обработка", ask_groq, text)
+        # ЛЮБОЙ ТЕКСТ (если не в состоянии) - тоже через ИИ
+        if text and not text.startswith("/"):
+            send_typing(cid)
+            
+            # Быстрая обработка
+            status = send_msg(cid, "🔄 0%")
+            if status:
+                msg_id = status.json()['result']['message_id']
+                time.sleep(0.2)
+                edit_msg(cid, msg_id, "🔄 50%")
+                time.sleep(0.2)
+                delete_msg(cid, msg_id)
+            
+            response = fast_ai_response(text)
+            animate_typing(cid, response, delay=0.05)
             ADMIN_STATS['total_messages'] += 1
     
     except Exception as e:
         logger.error(f"Error: {e}")
         try:
-            send_msg(cid, "⚠️ Произошла ошибка. Попробуй еще раз.")
+            send_msg(cid, "⚠️ Ошибка. Попробуй еще раз.")
         except:
             pass
 
@@ -467,5 +419,5 @@ def process_message(update):
 # 🚀 ЗАПУСК
 # ==============================================================================
 if __name__ == "__main__":
-    logger.info(f"Starting TITAN {Config.VERSION} on port {Config.PORT}")
+    logger.info(f"TITAN {Config.VERSION} starting on port {Config.PORT}")
     app.run(host='0.0.0.0', port=Config.PORT, threaded=True)
