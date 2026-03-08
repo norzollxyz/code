@@ -1,55 +1,57 @@
-import os, json, requests, threading
+import os, json, requests
 from flask import Flask, request
 
-# ==============================================================================
-# ⚙️ КОНФИГУРАЦИЯ
-# ==============================================================================
 class Config:
-    VERSION = "V26.0 PORT-FIX"
+    VERSION = "V26.0 FINAL-FIX"
     BOT_TOKEN = "8609459746:AAFF24zuVaODexXtAq7G_1ayB-s71watLeE"
+    # ПРОВЕРЬ ЭТОТ КЛЮЧ ЕЩЕ РАЗ:
     GEMINI_API_KEY = "AIzaSyBx67MYTv6YgGSLfeR5Vld93XwAHHHYQFE"
-    # Render ВСЕГДА ждет порт 10000 или тот, что в переменной PORT
     PORT = int(os.environ.get("PORT", 10000))
 
-# ==============================================================================
-# 🚀 ЯДРО ИИ И БОТА (УПРОЩЕНО ДЛЯ СТАБИЛЬНОСТИ)
-# ==============================================================================
 app = Flask(__name__)
 
 def get_ai_response(prompt):
+    # Используем проверенную модель 1.5-flash без лишних приставок
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={Config.GEMINI_API_KEY}"
+    headers = {'Content-Type': 'application/json'}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    
     try:
-        r = requests.post(url, json=payload, timeout=15).json()
-        return r['candidates'][0]['content']['parts'][0]['text']
-    except:
-        return "❌ Ошибка связи с ИИ. Проверь ключ."
+        r = requests.post(url, json=payload, headers=headers, timeout=20)
+        res = r.json()
+        if 'candidates' in res:
+            return res['candidates'][0]['content']['parts'][0]['text']
+        else:
+            # Выводим конкретную ошибку от Google
+            error_msg = res.get('error', {}).get('message', 'Неизвестная ошибка')
+            return f"❌ Ошибка Google: {error_msg}"
+    except Exception as e:
+        return f"❌ Ошибка сети: {str(e)}"
 
 @app.route('/', methods=['POST', 'GET'])
 def index():
-    if request.method == 'GET': 
-        return "TITAN IS ALIVE", 200
+    if request.method == 'GET': return "TITAN IS LIVE", 200
     
     upd = request.get_json()
-    if upd and "message" in upd:
-        m = upd["message"]
-        chat_id = m["chat"]["id"]
-        text = m.get("text", "")
+    if not upd or "message" not in upd: return "OK", 200
+    
+    m = upd["message"]
+    cid = m["chat"]["id"]
+    txt = m.get("text", "")
 
-        if text == "/start":
-            msg = "🌌 TITAN V26.0 ONLINE\nПорт успешно открыт!"
-        else:
-            msg = get_ai_response(text)
-        
-        requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage", 
-                      json={"chat_id": chat_id, "text": msg})
+    if txt == "/start":
+        msg = "🌌 <b>TITAN V26.0: СИСТЕМА СТАБИЛИЗИРОВАНА</b>\nПорт активен, жду твой вопрос!"
+    else:
+        # Отправляем статус "печатает", чтобы ты видел, что бот думает
+        requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendChatAction", 
+                      json={"chat_id": cid, "action": "typing"})
+        msg = get_ai_response(txt)
+    
+    requests.post(f"https://api.telegram.org/bot{Config.BOT_TOKEN}/sendMessage", 
+                  json={"chat_id": cid, "text": msg, "parse_mode": "HTML"})
     
     return "OK", 200
 
-# ==============================================================================
-# ⚡ ЗАПУСК (КРИТИЧЕСКИ ВАЖНО)
-# ==============================================================================
 if __name__ == "__main__":
-    # Хост 0.0.0.0 обязателен для Render!
     app.run(host='0.0.0.0', port=Config.PORT)
     
